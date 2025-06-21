@@ -1,0 +1,64 @@
+# Test commands for Desktop AI Assistant
+# IMPORTANT: Uncomment and adapt commands carefully for your specific testing environment.
+# Ensure a safe environment before running mouse/keyboard commands.
+# Ensure Moondream (e.g., via Ollama) is running for vision-related tests.
+# For find_text_on_screen_and_click, ensure Tesseract OCR is installed.
+
+# --- Conceptual Voice Commands (for testing logic if --voice is used with main.py) ---
+# These are natural language phrases you might speak.
+# "Hey assistant, what time is it?" (Would require a 'get_time' tool not yet implemented)
+# "Hey assistant, open notepad and type hello."
+
+# --- Screen Tools ---
+get_screen_resolution
+# capture_full_screen --save_path "./test_fullscreen.png"
+# capture_screen_region --x 0 --y 0 --width 400 --height 400 --save_path "./test_region.png"
+
+# --- Mouse Tools ---
+# mouse_move --x 100 --y 150 --duration 0.5
+# mouse_click --x 20 --y 20 --button "left"
+# mouse_scroll --amount 10
+# mouse_drag --start_x 100 --start_y 100 --end_x 300 --end_y 100 --duration 1
+
+# --- Keyboard Tools ---
+# (Focus a text editor before running these)
+# keyboard_type --text "Testing desktop assistant... Hello, world!"
+# keyboard_press_key --key_name "enter"
+# keyboard_hotkey --keys ["ctrl", "a"]
+
+# --- Vision Model Tools (require a capture tool to be called first) ---
+# 1. Example: capture_screen_region --x 0 --y 0 --width 500 --height 500 --save_path "vision_test_image.png"
+# 2. analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "What text is in this image?"
+# analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "Describe the window or UI elements visible."
+
+# --- Composite Tools ---
+# (Requires Tesseract OCR to be installed and working)
+# find_text_on_screen_and_click --text_to_find "File"
+# find_text_on_screen_and_click --text_to_find "Edit" --occurrence 1
+# find_text_on_screen_and_click --text_to_find "Help" --click_button "right"
+
+# --- Window Management Tools ---
+list_windows
+# list_windows --title_filter "Notepad" # Change filter to something relevant
+get_active_window_title
+# focus_window --title "Calculator" # Ensure Calculator (or other target) is open
+# get_window_geometry --title "Calculator" # Ensure Calculator (or other target) is open
+
+# --- File System Tools ---
+list_directory --path "."
+list_directory --path "./desktop_tools"
+# list_directory --path "../" # Example of relative path
+# list_directory --path "/nonexistentfolderxyz" # Test error
+read_text_file --path "requirements.txt"
+read_text_file --path "README.md" --max_chars 200
+# read_text_file --path "nonexistentfile.xyz" # Test error
+
+# Example sequence:
+# get_screen_resolution
+# list_windows
+# # (Manually ensure a specific app like Notepad is open for the next commands)
+# # focus_window --title "Notepad"
+# # keyboard_type --text "Automated input via Desktop Assistant."
+# # keyboard_press_key --key_name "enter"
+# # capture_screen_region --x 0 --y 0 --width 600 --height 400 --save_path "sequence_capture.png"
+# # analyze_image_with_vision_model --image_reference_id "ID_FROM_ABOVE" --prompt_text "What does the captured text say?"
