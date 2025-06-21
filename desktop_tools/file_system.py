@@ -1,4 +1,3 @@
-import os
 import logging
 from pathlib import Path
 from typing import List, Dict, Union, Optional
@@ -7,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 # Define a maximum file size for reading to prevent memory issues with large files
 MAX_READ_FILE_SIZE_BYTES = 1 * 1024 * 1024  # 1 MB
+
 
 def list_directory(path_str: str) -> Dict[str, Union[str, List[Dict[str, str]]]]:
     """
@@ -23,7 +23,9 @@ def list_directory(path_str: str) -> Dict[str, Union[str, List[Dict[str, str]]]]
         - "error": An error message if the path is invalid or inaccessible.
     """
     try:
-        path = Path(path_str).resolve() # Resolve to absolute path and handle symlinks potentially
+        path = Path(
+            path_str
+        ).resolve()  # Resolve to absolute path and handle symlinks potentially
 
         if not path.exists():
             return {"error": f"Path does not exist: {path_str}"}
@@ -44,6 +46,7 @@ def list_directory(path_str: str) -> Dict[str, Union[str, List[Dict[str, str]]]]
     except Exception as e:
         logger.error(f"Error listing directory '{path_str}': {e}", exc_info=True)
         return {"error": f"An unexpected error occurred while listing directory: {e}"}
+
 
 def read_text_file(path_str: str, max_chars: Optional[int] = None) -> Dict[str, str]:
     """
@@ -71,21 +74,29 @@ def read_text_file(path_str: str, max_chars: Optional[int] = None) -> Dict[str, 
 
         file_size = path.stat().st_size
         if file_size > MAX_READ_FILE_SIZE_BYTES and max_chars is None:
-            warning_msg = (f"File is large ({file_size} bytes). "
-                           f"Reading only the first {MAX_READ_FILE_SIZE_BYTES // 1024}KB.")
+            warning_msg = (
+                f"File is large ({file_size} bytes). "
+                f"Reading only the first {MAX_READ_FILE_SIZE_BYTES // 1024}KB."
+            )
             logger.warning(warning_msg)
             # Read only up to the defined max size for very large files if no specific max_chars
-            with open(path, 'r', encoding='utf-8', errors='replace') as f:
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
                 content = f.read(MAX_READ_FILE_SIZE_BYTES)
             return {"path": str(path), "content": content, "warning": warning_msg}
 
-        with open(path, 'r', encoding='utf-8', errors='replace') as f:
+        with open(path, "r", encoding="utf-8", errors="replace") as f:
             if max_chars is not None and max_chars > 0:
                 content = f.read(max_chars)
-                warning = "Content truncated to max_chars." if len(content) == max_chars and file_size > max_chars else None
-                logger.info(f"Read {len(content)} characters from file '{path}'. Max_chars was {max_chars}.")
+                warning = (
+                    "Content truncated to max_chars."
+                    if len(content) == max_chars and file_size > max_chars
+                    else None
+                )
+                logger.info(
+                    f"Read {len(content)} characters from file '{path}'. Max_chars was {max_chars}."
+                )
                 return {"path": str(path), "content": content, "warning": warning}
-            else: # No max_chars or invalid max_chars, read full file (up to internal limit already checked)
+            else:  # No max_chars or invalid max_chars, read full file (up to internal limit already checked)
                 content = f.read()
                 logger.info(f"Read file '{path}'. Length: {len(content)} chars.")
                 return {"path": str(path), "content": content}
@@ -94,14 +105,22 @@ def read_text_file(path_str: str, max_chars: Optional[int] = None) -> Dict[str, 
         logger.error(f"Permission denied for file: {path_str}")
         return {"error": f"Permission denied for file: {path_str}"}
     except UnicodeDecodeError:
-        logger.error(f"Cannot decode file as UTF-8 text: {path_str}. It might be a binary file.")
-        return {"error": f"File is likely not a text file or has an unsupported encoding: {path_str}"}
+        logger.error(
+            f"Cannot decode file as UTF-8 text: {path_str}. It might be a binary file."
+        )
+        return {
+            "error": f"File is likely not a text file or has an unsupported encoding: {path_str}"
+        }
     except Exception as e:
         logger.error(f"Error reading file '{path_str}': {e}", exc_info=True)
         return {"error": f"An unexpected error occurred while reading file: {e}"}
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
+    )
     logger.info("File System Module Example")
 
     # Create some dummy files and directories for testing
@@ -156,7 +175,9 @@ if __name__ == '__main__':
     if "error" in dir_as_file_data:
         print(f"Correctly handled error: {dir_as_file_data['error']}")
     else:
-        print("Error: Expected an error when trying to read a directory as a text file.")
+        print(
+            "Error: Expected an error when trying to read a directory as a text file."
+        )
 
     # Clean up dummy files and directory
     try:

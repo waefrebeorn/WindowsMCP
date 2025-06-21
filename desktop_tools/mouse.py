@@ -1,11 +1,14 @@
 import pyautogui
+
 try:
     from config_manager import config
 except ImportError:
     # Fallback if config_manager is not in the Python path directly
     # This might happen if desktop_tools is used as a standalone library
     # In the main application, config_manager should be accessible
-    print("Warning: config_manager not found. Using PyAutoGUI default settings for mouse.py.")
+    print(
+        "Warning: config_manager not found. Using PyAutoGUI default settings for mouse.py."
+    )
     config = {}
 
 # Apply global PyAutoGUI settings from config
@@ -28,7 +31,14 @@ def mouse_move(x: int, y: int, duration: float = 0.25) -> None:
         print(f"Error moving mouse: {e}")
         raise
 
-def mouse_click(x: int = None, y: int = None, button: str = 'left', clicks: int = 1, interval: float = 0.1) -> None:
+
+def mouse_click(
+    x: int = None,
+    y: int = None,
+    button: str = "left",
+    clicks: int = 1,
+    interval: float = 0.1,
+) -> None:
     """
     Performs a mouse click. Can click at current position or specified X, Y coordinates.
 
@@ -45,7 +55,15 @@ def mouse_click(x: int = None, y: int = None, button: str = 'left', clicks: int 
         print(f"Error clicking mouse: {e}")
         raise
 
-def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: float = 0.5, button: str = 'left') -> None:
+
+def mouse_drag(
+    start_x: int,
+    start_y: int,
+    end_x: int,
+    end_y: int,
+    duration: float = 0.5,
+    button: str = "left",
+) -> None:
     """
     Drags the mouse from a starting position to an ending position.
 
@@ -58,11 +76,14 @@ def mouse_drag(start_x: int, start_y: int, end_x: int, end_y: int, duration: flo
         button: The mouse button to hold down during the drag ('left', 'middle', 'right'). Defaults to 'left'.
     """
     try:
-        pyautogui.moveTo(start_x, start_y, duration=0.1) # Move to start position quickly
+        pyautogui.moveTo(
+            start_x, start_y, duration=0.1
+        )  # Move to start position quickly
         pyautogui.dragTo(end_x, end_y, duration=duration, button=button)
     except Exception as e:
         print(f"Error dragging mouse: {e}")
         raise
+
 
 def mouse_scroll(amount: int, x: int = None, y: int = None) -> None:
     """
@@ -79,10 +100,11 @@ def mouse_scroll(amount: int, x: int = None, y: int = None) -> None:
         print(f"Error scrolling mouse: {e}")
         raise
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Example usage (BE VERY CAREFUL - this will move and click your mouse)
     # It's recommended to have a way to quickly stop scripts (e.g., move mouse to a corner for pyautogui.FAILSAFE)
-    pyautogui.FAILSAFE = True # Move mouse to top-left corner to stop
+    pyautogui.FAILSAFE = True  # Move mouse to top-left corner to stop
 
     try:
         current_x, current_y = pyautogui.position()
@@ -118,10 +140,16 @@ if __name__ == '__main__':
         # mouse_drag(drag_start_x, drag_start_y + 50, drag_start_x, drag_start_y, duration=0.5)
         # print("Drag test complete.")
 
-        print("Example usage section complete. Most actions are commented out for safety.")
-        print("To test, uncomment specific actions and ensure pyautogui.FAILSAFE is True.")
+        print(
+            "Example usage section complete. Most actions are commented out for safety."
+        )
+        print(
+            "To test, uncomment specific actions and ensure pyautogui.FAILSAFE is True."
+        )
 
     except pyautogui.FailSafeException:
-        print("PyAutoGUI FAILSAFE triggered (mouse moved to a corner). Script terminated.")
+        print(
+            "PyAutoGUI FAILSAFE triggered (mouse moved to a corner). Script terminated."
+        )
     except Exception as e:
         print(f"An error occurred during example usage: {e}")

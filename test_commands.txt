@@ -1,64 +1,105 @@
 # Test commands for Desktop AI Assistant
-# IMPORTANT: Uncomment and adapt commands carefully for your specific testing environment.
-# Ensure a safe environment before running mouse/keyboard commands.
-# Ensure Moondream (e.g., via Ollama) is running for vision-related tests.
-# For find_text_on_screen_and_click, ensure Tesseract OCR is installed.
+#
+# IMPORTANT NOTES FOR TESTING:
+# - Uncomment and adapt commands carefully for your specific testing environment.
+# - Ensure a safe environment before running mouse/keyboard commands (e.g., have an empty text editor focused).
+# - For vision-related tests (analyze_image_with_vision_model), ensure Moondream (e.g., via Ollama) is running.
+# - For find_text_on_screen_and_click:
+#   - Ensure Tesseract OCR is installed and accessible via PATH OR TESSERACT_CMD_PATH in config.json.
+#   - To test TESSERACT_CMD_PATH and OCR_CONFIDENCE_THRESHOLD, you'll need to manually edit config.json
+#     and restart the agent between tests of these specific configurations.
+#   - For tests using "test_ocr_image.png", MANUALLY OPEN 'test_data/test_ocr_image.png' AND MAXIMIZE IT
+#     on your primary screen BEFORE running the command. The agent will take a full screenshot.
+# - Voice input testing (--voice flag) requires a working microphone and setup.
 
-# --- Conceptual Voice Commands (for testing logic if --voice is used with main.py) ---
-# These are natural language phrases you might speak.
-# "Hey assistant, what time is it?" (Would require a 'get_time' tool not yet implemented)
-# "Hey assistant, open notepad and type hello."
-
-# --- Screen Tools ---
+# --- SCREEN TOOLS ---
 get_screen_resolution
-# capture_full_screen --save_path "./test_fullscreen.png"
-# capture_screen_region --x 0 --y 0 --width 400 --height 400 --save_path "./test_region.png"
+# capture_full_screen # No save_path, will use default or not save based on config
+# capture_full_screen --save_path "./test_fullscreen_explicit.png"
+# capture_screen_region --x 10 --y 20 --width 300 --height 400 --save_path "./test_region_explicit.png"
+# capture_screen_region --x 0 --y 0 --width 100 --height 100 # No save_path
+# capture_screen_region --x 9999 --y 9999 --width 100 --height 100 # Test out of bounds capture (should be handled by pyautogui or underlying lib)
 
-# --- Mouse Tools ---
+# --- VISION MODEL TOOLS (require a prior screen capture) ---
+# Assumes a screen capture was done and its ID is known (e.g. "last_captured_id")
+# Replace "ID_FROM_CAPTURE_OUTPUT" with actual ID from a capture command's output.
+# analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "What text is prominent in this image?"
+# analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "Describe any UI elements you see."
+# analyze_image_with_vision_model --image_reference_id "non_existent_id" --prompt_text "This should fail." # Test error
+
+# --- OCR AND CLICK TOOLS ---
+# (Requires Tesseract OCR. For image-specific tests, open 'test_data/test_ocr_image.png' maximized first)
+# find_text_on_screen_and_click --text_to_find "Test Text One"
+# find_text_on_screen_and_click --text_to_find "Test Text Two" --occurrence 1
+# find_text_on_screen_and_click --text_to_find "Line Three" --click_button "right"
+# find_text_on_screen_and_click --text_to_find "Test Text One" --occurrence 2 # Test second occurrence if "Test Text One" appears multiple times due to OCR splitting
+# find_text_on_screen_and_click --text_to_find "NonExistentUniqueTextString" # Test text not found
+# find_text_on_screen_and_click --text_to_find "" # Test empty string (should error or be handled)
+# find_text_on_screen_and_click --text_to_find "Another Line" --occurrence 3 # Test occurrence out of bounds if only one "Another Line"
+
+# --- MOUSE TOOLS ---
+# (Use with caution - will move your mouse)
 # mouse_move --x 100 --y 150 --duration 0.5
-# mouse_click --x 20 --y 20 --button "left"
-# mouse_scroll --amount 10
-# mouse_drag --start_x 100 --start_y 100 --end_x 300 --end_y 100 --duration 1
+# mouse_move --x 500 --y 500 # Default duration
+# mouse_click --x 20 --y 20 --button "left" # Click top-left
+# mouse_click --button "right" # Right-click at current position
+# mouse_click --clicks 2 --interval 0.2 # Double click
+# mouse_scroll --amount 10 # Scroll up
+# mouse_scroll --amount -5 # Scroll down
+# mouse_drag --start_x 100 --start_y 100 --end_x 300 --end_y 100 --duration 1 --button "left"
 
-# --- Keyboard Tools ---
-# (Focus a text editor before running these)
-# keyboard_type --text "Testing desktop assistant... Hello, world!"
+# --- KEYBOARD TOOLS ---
+# (Focus a text editor or safe input field before running these)
+# keyboard_type --text "Hello, this is the Desktop AI Assistant testing keyboard input!"
+# keyboard_type --text "Special characters: !@#$%^&*()_+[]{};':\",./<>?" --interval 0.05
 # keyboard_press_key --key_name "enter"
-# keyboard_hotkey --keys ["ctrl", "a"]
+# keyboard_press_key --key_name "backspace"
+# keyboard_press_key --key_name "tab"
+# keyboard_press_key --key_name "esc"
+# keyboard_hotkey --keys ["ctrl", "a"] # Select all
+# keyboard_hotkey --keys ["ctrl", "c"] # Copy
+# keyboard_hotkey --keys ["alt", "f4"] # Example - CAUTION: This might close active window
 
-# --- Vision Model Tools (require a capture tool to be called first) ---
-# 1. Example: capture_screen_region --x 0 --y 0 --width 500 --height 500 --save_path "vision_test_image.png"
-# 2. analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "What text is in this image?"
-# analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "Describe the window or UI elements visible."
-
-# --- Composite Tools ---
-# (Requires Tesseract OCR to be installed and working)
-# find_text_on_screen_and_click --text_to_find "File"
-# find_text_on_screen_and_click --text_to_find "Edit" --occurrence 1
-# find_text_on_screen_and_click --text_to_find "Help" --click_button "right"
-
-# --- Window Management Tools ---
+# --- WINDOW MANAGEMENT TOOLS ---
 list_windows
-# list_windows --title_filter "Notepad" # Change filter to something relevant
+list_windows --title_filter "Notepad" # Change filter to something relevant on your system
+list_windows --title_filter "xgfyw_non_existent_filter_xyz" # Test no matches
 get_active_window_title
-# focus_window --title "Calculator" # Ensure Calculator (or other target) is open
+# focus_window --title "Calculator" # Ensure Calculator (or other target) is open and visible
+# focus_window --title "NonExistentWindowXYZ123" # Test focusing non-existent window
 # get_window_geometry --title "Calculator" # Ensure Calculator (or other target) is open
+# get_window_geometry --title "NonExistentWindowXYZ123" # Test geometry for non-existent window
 
-# --- File System Tools ---
+# --- FILE SYSTEM TOOLS ---
 list_directory --path "."
-list_directory --path "./desktop_tools"
-# list_directory --path "../" # Example of relative path
-# list_directory --path "/nonexistentfolderxyz" # Test error
+list_directory --path "./desktop_tools" # Relative path
+# list_directory --path "C:/" # Example absolute path (Windows) - adapt for your OS
+# list_directory --path "/usr/bin" # Example absolute path (Linux/macOS) - adapt for your OS
+list_directory --path "./nonexistentfolderxyz123" # Test error: path does not exist
+# read_text_file --path "./nonexistentfolderxyz123/somefile.txt" # Test error: reading from non-existent dir
 read_text_file --path "requirements.txt"
-read_text_file --path "README.md" --max_chars 200
-# read_text_file --path "nonexistentfile.xyz" # Test error
+read_text_file --path "README.md" --max_chars 150
+# read_text_file --path "config.json" # Test reading a JSON file as text
+# read_text_file --path "nonexistentfile.xyz123" # Test error: file not found
+# read_text_file --path "./test_data/test_ocr_image.png" # Test reading a binary file (should error gracefully)
 
-# Example sequence:
-# get_screen_resolution
-# list_windows
-# # (Manually ensure a specific app like Notepad is open for the next commands)
-# # focus_window --title "Notepad"
-# # keyboard_type --text "Automated input via Desktop Assistant."
-# # keyboard_press_key --key_name "enter"
-# # capture_screen_region --x 0 --y 0 --width 600 --height 400 --save_path "sequence_capture.png"
-# # analyze_image_with_vision_model --image_reference_id "ID_FROM_ABOVE" --prompt_text "What does the captured text say?"
+# --- Example Sequences & Edge Cases ---
+# 1. Capture, Analyze, then try to find text from analysis
+# capture_full_screen
+# analyze_image_with_vision_model --image_reference_id "ID_FROM_CAPTURE_OUTPUT" --prompt_text "What is the main title text visible on the screen?"
+# (Then manually use the text from vision model in find_text_on_screen_and_click)
+# find_text_on_screen_and_click --text_to_find "TEXT_FROM_VISION_MODEL_RESPONSE"
+
+# 2. Test argument validation (some tools might raise ValueError handled by dispatcher)
+# mouse_move --x "not_an_int" --y 100 # Should result in ToolArgumentError
+# keyboard_hotkey --keys "not_a_list" # Should result in ToolArgumentError
+# capture_screen_region --x 0 --y 0 --width -100 --height 100 # Invalid width
+
+# 3. Test voice input/output by running with --voice and speaking commands.
+#    (Manual test - observe TTS output and transcription accuracy)
+#    Example spoken commands:
+#    "List all windows."
+#    "Focus notepad." (Ensure Notepad is open)
+#    "Type hello world."
+#    "Find the text file menu and click it." (If 'File' menu is visible)
+#    "Capture the screen and tell me what you see."

@@ -11,14 +11,30 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "x": types.Schema(type=types.Type.INTEGER, description="The x-coordinate of the top-left corner of the region."),
-                    "y": types.Schema(type=types.Type.INTEGER, description="The y-coordinate of the top-left corner of the region."),
-                    "width": types.Schema(type=types.Type.INTEGER, description="The width of the region in pixels."),
-                    "height": types.Schema(type=types.Type.INTEGER, description="The height of the region in pixels."),
-                    "save_path": types.Schema(type=types.Type.STRING, nullable=True, description="Optional file path to save the captured image for debugging. If None, image is not saved to disk by this tool directly but returned for further processing.")
+                    "x": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The x-coordinate of the top-left corner of the region.",
+                    ),
+                    "y": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The y-coordinate of the top-left corner of the region.",
+                    ),
+                    "width": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The width of the region in pixels.",
+                    ),
+                    "height": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The height of the region in pixels.",
+                    ),
+                    "save_path": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        description="Optional file path to save the captured image for debugging. If None, image is not saved to disk by this tool directly but returned for further processing.",
+                    ),
                 },
-                required=["x", "y", "width", "height"]
-            )
+                required=["x", "y", "width", "height"],
+            ),
         ),
         types.FunctionDeclaration(
             name="capture_full_screen",
@@ -26,14 +42,18 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "save_path": types.Schema(type=types.Type.STRING, nullable=True, description="Optional file path to save the captured image for debugging. If None, image is not saved to disk by this tool directly but returned for further processing.")
-                }
-            )
+                    "save_path": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        description="Optional file path to save the captured image for debugging. If None, image is not saved to disk by this tool directly but returned for further processing.",
+                    )
+                },
+            ),
         ),
         types.FunctionDeclaration(
             name="get_screen_resolution",
             description="Returns the width and height of the primary screen in pixels.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={})
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
         ),
         types.FunctionDeclaration(
             name="mouse_move",
@@ -41,12 +61,20 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "x": types.Schema(type=types.Type.INTEGER, description="The target x-coordinate."),
-                    "y": types.Schema(type=types.Type.INTEGER, description="The target y-coordinate."),
-                    "duration": types.Schema(type=types.Type.NUMBER, nullable=True, description="Optional. Time in seconds to spend moving the mouse. Defaults to a short duration (e.g., 0.25s).")
+                    "x": types.Schema(
+                        type=types.Type.INTEGER, description="The target x-coordinate."
+                    ),
+                    "y": types.Schema(
+                        type=types.Type.INTEGER, description="The target y-coordinate."
+                    ),
+                    "duration": types.Schema(
+                        type=types.Type.NUMBER,
+                        nullable=True,
+                        description="Optional. Time in seconds to spend moving the mouse. Defaults to a short duration (e.g., 0.25s).",
+                    ),
                 },
-                required=["x", "y"]
-            )
+                required=["x", "y"],
+            ),
         ),
         types.FunctionDeclaration(
             name="mouse_click",
@@ -54,14 +82,35 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "x": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. The target x-coordinate. If None, clicks at current mouse position."),
-                    "y": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. The target y-coordinate. If None, clicks at current mouse position."),
-                    "button": types.Schema(type=types.Type.STRING, nullable=True, enum=["left", "middle", "right"], description="Optional. Mouse button to click ('left', 'middle', 'right'). Defaults to 'left'."),
-                    "clicks": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. Number of times to click. Defaults to 1."),
-                    "interval": types.Schema(type=types.Type.NUMBER, nullable=True, description="Optional. Time in seconds between clicks if clicks > 1. Defaults to 0.1s.")
-                }
+                    "x": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. The target x-coordinate. If None, clicks at current mouse position.",
+                    ),
+                    "y": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. The target y-coordinate. If None, clicks at current mouse position.",
+                    ),
+                    "button": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        enum=["left", "middle", "right"],
+                        description="Optional. Mouse button to click ('left', 'middle', 'right'). Defaults to 'left'.",
+                    ),
+                    "clicks": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. Number of times to click. Defaults to 1.",
+                    ),
+                    "interval": types.Schema(
+                        type=types.Type.NUMBER,
+                        nullable=True,
+                        description="Optional. Time in seconds between clicks if clicks > 1. Defaults to 0.1s.",
+                    ),
+                },
                 # No required fields, as clicking at current position with defaults is valid.
-            )
+            ),
         ),
         types.FunctionDeclaration(
             name="mouse_drag",
@@ -69,15 +118,36 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "start_x": types.Schema(type=types.Type.INTEGER, description="The x-coordinate of the drag start position."),
-                    "start_y": types.Schema(type=types.Type.INTEGER, description="The y-coordinate of the drag start position."),
-                    "end_x": types.Schema(type=types.Type.INTEGER, description="The x-coordinate of the drag end position."),
-                    "end_y": types.Schema(type=types.Type.INTEGER, description="The y-coordinate of the drag end position."),
-                    "duration": types.Schema(type=types.Type.NUMBER, nullable=True, description="Optional. Time in seconds to spend dragging. Defaults to 0.5s."),
-                    "button": types.Schema(type=types.Type.STRING, nullable=True, enum=["left", "middle", "right"], description="Optional. Mouse button to hold during drag. Defaults to 'left'.")
+                    "start_x": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The x-coordinate of the drag start position.",
+                    ),
+                    "start_y": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The y-coordinate of the drag start position.",
+                    ),
+                    "end_x": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The x-coordinate of the drag end position.",
+                    ),
+                    "end_y": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="The y-coordinate of the drag end position.",
+                    ),
+                    "duration": types.Schema(
+                        type=types.Type.NUMBER,
+                        nullable=True,
+                        description="Optional. Time in seconds to spend dragging. Defaults to 0.5s.",
+                    ),
+                    "button": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        enum=["left", "middle", "right"],
+                        description="Optional. Mouse button to hold during drag. Defaults to 'left'.",
+                    ),
                 },
-                required=["start_x", "start_y", "end_x", "end_y"]
-            )
+                required=["start_x", "start_y", "end_x", "end_y"],
+            ),
         ),
         types.FunctionDeclaration(
             name="mouse_scroll",
@@ -85,12 +155,23 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "amount": types.Schema(type=types.Type.INTEGER, description="Number of units to scroll. Positive for up, negative for down."),
-                    "x": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. X-coordinate for scroll. Defaults to current mouse position."),
-                    "y": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. Y-coordinate for scroll. Defaults to current mouse position.")
+                    "amount": types.Schema(
+                        type=types.Type.INTEGER,
+                        description="Number of units to scroll. Positive for up, negative for down.",
+                    ),
+                    "x": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. X-coordinate for scroll. Defaults to current mouse position.",
+                    ),
+                    "y": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. Y-coordinate for scroll. Defaults to current mouse position.",
+                    ),
                 },
-                required=["amount"]
-            )
+                required=["amount"],
+            ),
         ),
         types.FunctionDeclaration(
             name="keyboard_type",
@@ -98,11 +179,17 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "text": types.Schema(type=types.Type.STRING, description="The text string to type."),
-                    "interval": types.Schema(type=types.Type.NUMBER, nullable=True, description="Optional. Time in seconds between pressing each key. Defaults to a small interval (e.g., 0.01s).")
+                    "text": types.Schema(
+                        type=types.Type.STRING, description="The text string to type."
+                    ),
+                    "interval": types.Schema(
+                        type=types.Type.NUMBER,
+                        nullable=True,
+                        description="Optional. Time in seconds between pressing each key. Defaults to a small interval (e.g., 0.01s).",
+                    ),
                 },
-                required=["text"]
-            )
+                required=["text"],
+            ),
         ),
         types.FunctionDeclaration(
             name="keyboard_press_key",
@@ -112,11 +199,11 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 properties={
                     "key_name": types.Schema(
                         type=types.Type.STRING,
-                        description="Name of the key to press (e.g., 'enter', 'a', 'ctrl', 'shift', 'alt', 'left', 'f5'). Can also be a list of characters to press sequentially e.g. 'abc'."
+                        description="Name of the key to press (e.g., 'enter', 'a', 'ctrl', 'shift', 'alt', 'left', 'f5'). Can also be a list of characters to press sequentially e.g. 'abc'.",
                     )
                 },
-                required=["key_name"]
-            )
+                required=["key_name"],
+            ),
         ),
         types.FunctionDeclaration(
             name="keyboard_hotkey",
@@ -127,11 +214,11 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                     "keys": types.Schema(
                         type=types.Type.ARRAY,
                         items=types.Schema(type=types.Type.STRING),
-                        description="A list of key names to press together. Example: ['ctrl', 'c'] for Ctrl+C."
+                        description="A list of key names to press together. Example: ['ctrl', 'c'] for Ctrl+C.",
                     )
                 },
-                required=["keys"]
-            )
+                required=["keys"],
+            ),
         ),
         types.FunctionDeclaration(
             name="analyze_image_with_vision_model",
@@ -139,11 +226,18 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "prompt_text": types.Schema(type=types.Type.STRING, description="The text prompt to guide the vision model's analysis (e.g., 'What text is in this image?', 'Describe this UI element.')."),
-                    "image_reference_id": types.Schema(type=types.Type.STRING, nullable=True, description="Optional. A reference ID of a previously captured image to analyze. If not provided, the system may use the last captured image if available.")
+                    "prompt_text": types.Schema(
+                        type=types.Type.STRING,
+                        description="The text prompt to guide the vision model's analysis (e.g., 'What text is in this image?', 'Describe this UI element.').",
+                    ),
+                    "image_reference_id": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        description="Optional. A reference ID of a previously captured image to analyze. If not provided, the system may use the last captured image if available.",
+                    ),
                 },
-                required=["prompt_text"]
-            )
+                required=["prompt_text"],
+            ),
         ),
         # Example of a more composite tool that might combine actions:
         types.FunctionDeclaration(
@@ -152,12 +246,24 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "text_to_find": types.Schema(type=types.Type.STRING, description="The text string to search for on the screen."),
-                    "click_button": types.Schema(type=types.Type.STRING, nullable=True, enum=["left", "middle", "right"], description="Optional. Mouse button to click if text is found. Defaults to 'left'."),
-                    "occurrence": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. Which occurrence of the text to click if multiple are found (1-based index). Defaults to 1 (the first one).")
+                    "text_to_find": types.Schema(
+                        type=types.Type.STRING,
+                        description="The text string to search for on the screen.",
+                    ),
+                    "click_button": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        enum=["left", "middle", "right"],
+                        description="Optional. Mouse button to click if text is found. Defaults to 'left'.",
+                    ),
+                    "occurrence": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. Which occurrence of the text to click if multiple are found (1-based index). Defaults to 1 (the first one).",
+                    ),
                 },
-                required=["text_to_find"]
-            )
+                required=["text_to_find"],
+            ),
         ),
         # Window Management Tools
         types.FunctionDeclaration(
@@ -166,14 +272,18 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "title_filter": types.Schema(type=types.Type.STRING, nullable=True, description="Optional. If provided, only windows whose titles contain this string (case-insensitive) will be returned.")
-                }
-            )
+                    "title_filter": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        description="Optional. If provided, only windows whose titles contain this string (case-insensitive) will be returned.",
+                    )
+                },
+            ),
         ),
         types.FunctionDeclaration(
             name="get_active_window_title",
             description="Returns the title of the currently active (focused) window.",
-            parameters=types.Schema(type=types.Type.OBJECT, properties={})
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
         ),
         types.FunctionDeclaration(
             name="focus_window",
@@ -181,10 +291,13 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "title": types.Schema(type=types.Type.STRING, description="The title of the window to focus (exact or substring).")
+                    "title": types.Schema(
+                        type=types.Type.STRING,
+                        description="The title of the window to focus (exact or substring).",
+                    )
                 },
-                required=["title"]
-            )
+                required=["title"],
+            ),
         ),
         types.FunctionDeclaration(
             name="get_window_geometry",
@@ -192,10 +305,13 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "title": types.Schema(type=types.Type.STRING, description="The title of the window to get geometry for (exact or substring).")
+                    "title": types.Schema(
+                        type=types.Type.STRING,
+                        description="The title of the window to get geometry for (exact or substring).",
+                    )
                 },
-                required=["title"]
-            )
+                required=["title"],
+            ),
         ),
         # File System Tools
         types.FunctionDeclaration(
@@ -204,10 +320,13 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="The path to the directory to list.")
+                    "path": types.Schema(
+                        type=types.Type.STRING,
+                        description="The path to the directory to list.",
+                    )
                 },
-                required=["path"]
-            )
+                required=["path"],
+            ),
         ),
         types.FunctionDeclaration(
             name="read_text_file",
@@ -215,14 +334,22 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="The path to the text file to read."),
-                    "max_chars": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. Maximum number of characters to read from the beginning of the file.")
+                    "path": types.Schema(
+                        type=types.Type.STRING,
+                        description="The path to the text file to read.",
+                    ),
+                    "max_chars": types.Schema(
+                        type=types.Type.INTEGER,
+                        nullable=True,
+                        description="Optional. Maximum number of characters to read from the beginning of the file.",
+                    ),
                 },
-                required=["path"]
-            )
-        )
+                required=["path"],
+            ),
+        ),
     ]
 )
+
 
 def get_ollama_tools_json_schema() -> List[Dict[str, Any]]:
     """
@@ -252,7 +379,7 @@ def get_ollama_tools_json_schema() -> List[Dict[str, Any]]:
         elif gemini_schema.properties:
             json_schema["type"] = "object"
         else:
-            json_schema["type"] = "string" # Default/fallback
+            json_schema["type"] = "string"  # Default/fallback
 
         if gemini_schema.description:
             json_schema["description"] = gemini_schema.description
@@ -264,9 +391,10 @@ def get_ollama_tools_json_schema() -> List[Dict[str, Any]]:
             # Or, adjust based on Ollama's specific schema expectations.
             # For now, let's assume Ollama might handle it by type union or just optionality.
             # To be safe, if nullable is true, make it a union type with "null"
-            if json_schema.get("type") and json_schema.get("type") != "object": # Avoid for objects with properties
+            if (
+                json_schema.get("type") and json_schema.get("type") != "object"
+            ):  # Avoid for objects with properties
                 json_schema["type"] = [json_schema["type"], "null"]
-
 
         if gemini_schema.enum:
             json_schema["enum"] = list(gemini_schema.enum)
@@ -289,13 +417,18 @@ def get_ollama_tools_json_schema() -> List[Dict[str, Any]]:
             tool_schema = {
                 "name": declaration.name,
                 "description": declaration.description,
-                "parameters": convert_schema(declaration.parameters) if declaration.parameters else {"type": "object", "properties": {}}
+                "parameters": (
+                    convert_schema(declaration.parameters)
+                    if declaration.parameters
+                    else {"type": "object", "properties": {}}
+                ),
             }
             ollama_tools.append({"type": "function", "function": tool_schema})
 
     return ollama_tools
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Print the Gemini tool declarations (for inspection)
     # print("--- Gemini Tool Declarations ---")
     # if DESKTOP_TOOLS_INSTANCE and DESKTOP_TOOLS_INSTANCE.function_declarations:
@@ -319,6 +452,7 @@ if __name__ == '__main__':
     print("\n--- Ollama JSON Schema ---")
     ollama_schema = get_ollama_tools_json_schema()
     import json
+
     print(json.dumps(ollama_schema, indent=2))
 
     # Verify a specific tool's schema for nullable properties

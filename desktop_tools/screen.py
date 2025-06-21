@@ -1,7 +1,10 @@
 import pyautogui
 from PIL import Image
 
-def capture_screen_region(x: int, y: int, width: int, height: int, filename: str = None) -> Image.Image:
+
+def capture_screen_region(
+    x: int, y: int, width: int, height: int, filename: str = None
+) -> Image.Image:
     """
     Captures a specified region of the primary screen.
 
@@ -25,6 +28,7 @@ def capture_screen_region(x: int, y: int, width: int, height: int, filename: str
         print(f"Error capturing screen region: {e}")
         raise
 
+
 def capture_full_screen(filename: str = None) -> Image.Image:
     """
     Captures the entire primary screen.
@@ -44,6 +48,7 @@ def capture_full_screen(filename: str = None) -> Image.Image:
         print(f"Error capturing full screen: {e}")
         raise
 
+
 def get_screen_resolution() -> tuple[int, int]:
     """
     Gets the resolution of the primary screen.
@@ -58,7 +63,8 @@ def get_screen_resolution() -> tuple[int, int]:
         print(f"Error getting screen resolution: {e}")
         raise
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Example usage (be careful, this will actually take screenshots if run)
     try:
         res_width, res_height = get_screen_resolution()
@@ -68,8 +74,12 @@ if __name__ == '__main__':
         # Ensure the coordinates and size are valid for your screen
         if res_width >= 100 and res_height >= 100:
             print("Capturing 100x100 region at (0,0)...")
-            region_image = capture_screen_region(0, 0, 100, 100, "test_region_capture.png")
-            print(f"Captured region image: {region_image.size}, format: {region_image.format}")
+            region_image = capture_screen_region(
+                0, 0, 100, 100, "test_region_capture.png"
+            )
+            print(
+                f"Captured region image: {region_image.size}, format: {region_image.format}"
+            )
             print("Saved to test_region_capture.png")
         else:
             print("Screen resolution too small for 100x100 region test.")
