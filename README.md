@@ -25,7 +25,7 @@ This project is a Python-based agent designed to control a Windows desktop envir
 *   **Git**: For cloning the repository.
 *   **Tesseract OCR**: Required for the `find_text_on_screen_and_click` tool and other precise text-location tasks.
     *   Installation instructions: [Tesseract OCR Documentation](https://tesseract-ocr.github.io/tessdoc/Installation.html)
-    *   Ensure Tesseract is added to your system's PATH, or you may need to configure `pytesseract.tesseract_cmd` within the `ocr_service.py` if issues arise (not currently implemented as a config option).
+    *   Ensure Tesseract is added to your system's PATH. Alternatively, you can set the `TESSERACT_CMD_PATH` in your `config.json` to the full path of the Tesseract executable if it's not in your PATH or you need to specify a particular installation.
 *   **Ollama**: (Optional, if using local LLMs/Moondream) Install from [ollama.com](https://ollama.com).
 *   **ffmpeg**: (Required by `openai-whisper`) A cross-platform solution to record, convert and stream audio and video.
     *   Linux: `sudo apt update && sudo apt install ffmpeg`
@@ -62,7 +62,7 @@ This project is a Python-based agent designed to control a Windows desktop envir
     *   **Edit `config.json`**: Review and update the settings:
         *   `LLM_PROVIDER`: `"gemini"` or `"ollama"`.
         *   `OLLAMA_API_URL`: (If Ollama) Defaults to `"http://localhost:11434"`.
-        *   `OLLAMA_DEFAULT_MODEL`: (If Ollama) Default text LLM (e.g., `"phi3:mini"`).
+        *   `OLLAMA_DEFAULT_MODEL`: (If Ollama) Default text LLM. Recommended: `"qwen2.5-coder:7b-instruct-q4_K_M"` for good tool calling capability.
         *   `MOONDREAM_API_URL`: Endpoint for Moondream v2 (if used, e.g., via Ollama: `"http://localhost:11434/api/generate"`).
         *   `OLLAMA_MOONDREAM_MODEL`: Name of Moondream model in Ollama (e.g., `"moondream"`).
         *   `SCREENSHOT_SAVE_PATH`: Optional path to save screenshots (e.g., `"./screenshots"`).
@@ -79,8 +79,15 @@ This project is a Python-based agent designed to control a Windows desktop envir
         ```
     *   **Ollama Setup (if using Ollama)**:
         *   Ensure Ollama is installed and running.
-        *   Pull your chosen LLM: `ollama pull <your_llm_name>` (e.g., `ollama pull phi3:mini`).
-        *   Pull Moondream (if using for vision): `ollama pull moondream`.
+        *   Pull your chosen LLM. For tool calling, it's recommended to use a model like `qwen2.5-coder:7b-instruct-q4_K_M`:
+            ```bash
+            ollama pull qwen2.5-coder:7b-instruct-q4_K_M
+            ```
+        *   Pull Moondream (if using for vision):
+            ```bash
+            ollama pull moondream
+            ```
+            (The `ollama_setup.bat` script can help automate pulling these recommended models.)
     *   **Microphone Access**: Ensure the application has permission to access your microphone for voice input.
 
 ## Running the Assistant
@@ -128,4 +135,4 @@ Examples:
 9.  **Agent**: "Done."
 
 ---
-*The batch scripts (`.bat` files) previously in the repository are legacy and not relevant for this desktop assistant. Rely on `python main.py`.*
+*Several batch scripts (`.bat` files) are provided in the repository as convenient shortcuts for common tasks like initial setup (`ollama_setup.bat`, `setup_venv.bat`) and running the agent (`run_agent.bat`, `run_ollama_agent.bat`). While `python main.py` with appropriate arguments is the primary way to run the assistant, these scripts can simplify the process.*

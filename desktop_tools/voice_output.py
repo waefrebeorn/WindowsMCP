@@ -1,6 +1,6 @@
 import pyttsx3
 import logging
-import asyncio # For running blocking TTS in a separate thread
+import asyncio  # For running blocking TTS in a separate thread
 
 logger = logging.getLogger(__name__)
 
@@ -8,35 +8,106 @@ logger = logging.getLogger(__name__)
 _tts_engine = None
 _tts_engine_initialized_successfully = False
 
+# Attempt to import global config
+try:
+    from config_manager import config as global_config, DEFAULT_CONFIG
+except ImportError:
+    # Fallback if config_manager is not available (e.g., testing module standalone)
+    global_config = {}
+    DEFAULT_CONFIG = {
+        "TTS_VOICE_ID": None,
+        "TTS_RATE": 150,
+        "TTS_VOLUME": 0.9,
+    }
+
+
 def _initialize_tts_engine():
-    """Initializes the TTS engine if not already done."""
+    """Initializes the TTS engine if not already done, applying config settings."""
     global _tts_engine, _tts_engine_initialized_successfully
     if _tts_engine_initialized_successfully:
         return _tts_engine
 
-    if _tts_engine is None: # Attempt initialization only once if it failed before or not tried
+    if _tts_engine is None:
         try:
             logger.info("Initializing TTS engine (pyttsx3)...")
             _tts_engine = pyttsx3.init()
 
-            # Optional: Configure voice, rate, volume
-            # voices = _tts_engine.getProperty('voices')
-            # For example, to set a specific voice (if available on the system):
-            # _tts_engine.setProperty('voice', voices[1].id) # Index 1 for a different voice
+            tts_voice_id = global_config.get(
+                "TTS_VOICE_ID", DEFAULT_CONFIG.get("TTS_VOICE_ID")
+            )
+            tts_rate_config = global_config.get(
+                "TTS_RATE", DEFAULT_CONFIG.get("TTS_RATE")
+            )
+            tts_volume_config = global_config.get(
+                "TTS_VOLUME", DEFAULT_CONFIG.get("TTS_VOLUME")
+            )
 
-            # _tts_engine.setProperty('rate', 150)  # Speed percent (can go over 100)
-            # _tts_engine.setProperty('volume', 0.9) # Volume 0-1
+            # Set Voice
+            if tts_voice_id:
+                try:
+                    available_voices = _tts_engine.getProperty("voices")
+                    voice_found = False
+                    for voice in available_voices:
+                        if voice.id == tts_voice_id:
+                            _tts_engine.setProperty("voice", tts_voice_id)
+                            logger.info(f"TTS voice set to ID: {tts_voice_id}")
+                            voice_found = True
+                            break
+                    if not voice_found:
+                        logger.warning(
+                            f"TTS_VOICE_ID '{tts_voice_id}' not found. Using default system voice."
+                        )
+                        logger.info("Available voice IDs on this system:")
+                        for v_idx, v_info in enumerate(available_voices):
+                            logger.info(
+                                f"  - ID: {v_info.id} (Name: {v_info.name}, Lang: {v_info.languages}, Gender: {v_info.gender})"
+                            )
+                except Exception as e_voice:
+                    logger.error(
+                        f"Error setting TTS_VOICE_ID '{tts_voice_id}': {e_voice}"
+                    )
+
+            # Set Rate
+            if tts_rate_config is not None:
+                try:
+                    rate = int(tts_rate_config)
+                    _tts_engine.setProperty("rate", rate)
+                    logger.info(f"TTS rate set to: {rate}")
+                except ValueError:
+                    logger.warning(
+                        f"Invalid TTS_RATE '{tts_rate_config}'. Using default engine rate."
+                    )
+
+            # Set Volume
+            if tts_volume_config is not None:
+                try:
+                    volume = float(tts_volume_config)
+                    if 0.0 <= volume <= 1.0:
+                        _tts_engine.setProperty("volume", volume)
+                        logger.info(f"TTS volume set to: {volume}")
+                    else:
+                        logger.warning(
+                            f"TTS_VOLUME '{tts_volume_config}' out of range (0.0-1.0). Using default engine volume."
+                        )
+                except ValueError:
+                    logger.warning(
+                        f"Invalid TTS_VOLUME '{tts_volume_config}'. Using default engine volume."
+                    )
 
             _tts_engine_initialized_successfully = True
-            logger.info("TTS engine initialized successfully.")
+            logger.info("TTS engine initialized successfully with configured settings.")
             return _tts_engine
         except Exception as e:
             logger.error(f"Failed to initialize pyttsx3 engine: {e}", exc_info=True)
-            logger.error("TTS functionality will be disabled. Ensure you have a TTS engine installed on your system (e.g., SAPI5 on Windows, NSSpeechSynthesizer on macOS, espeak on Linux).")
-            _tts_engine = None # Ensure it's None if init failed
-            _tts_engine_initialized_successfully = False # Explicitly mark as failed
+            logger.error(
+                "TTS functionality will be disabled. Ensure you have a TTS engine installed on your system "
+                "(e.g., SAPI5 on Windows, NSSpeechSynthesizer on macOS, espeak on Linux)."
+            )
+            _tts_engine = None
+            _tts_engine_initialized_successfully = False
             return None
-    return _tts_engine # Return None if initialization previously failed
+    return _tts_engine
+
 
 def _speak_text_sync(text: str):
     """Synchronous part of speaking text."""
@@ -44,12 +115,13 @@ def _speak_text_sync(text: str):
     if engine:
         try:
             engine.say(text)
-            engine.runAndWait() # Blocks until speaking is complete
-            logger.info(f"Spoke text: \"{text[:50]}...\"")
+            engine.runAndWait()  # Blocks until speaking is complete
+            logger.info(f'Spoke text: "{text[:50]}..."')
         except Exception as e:
             logger.error(f"Error during TTS speech: {e}", exc_info=True)
     else:
         logger.warning("TTS engine not available. Cannot speak text.")
+
 
 async def speak_text_async(text: str):
     """
@@ -57,7 +129,9 @@ async def speak_text_async(text: str):
     This is important for not blocking the main asyncio event loop.
     """
     if not text or not text.strip():
-        logger.info("speak_text_async called with empty or whitespace-only text. Nothing to speak.")
+        logger.info(
+            "speak_text_async called with empty or whitespace-only text. Nothing to speak."
+        )
         return
 
     # Ensure engine is initialized (or initialization is attempted) before trying to speak
@@ -69,7 +143,7 @@ async def speak_text_async(text: str):
     await loop.run_in_executor(None, _speak_text_sync, text)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     logger.info("Voice Output (TTS) Example")
 
@@ -81,22 +155,21 @@ if __name__ == '__main__':
 
     async def main_example():
         test_phrase_1 = "Hello from your friendly Desktop AI Assistant!"
-        print(f"Attempting to speak: \"{test_phrase_1}\"")
+        print(f'Attempting to speak: "{test_phrase_1}"')
         await speak_text_async(test_phrase_1)
         print("Speaking finished for phrase 1.")
 
-        await asyncio.sleep(0.5) # Small pause
+        await asyncio.sleep(0.5)  # Small pause
 
         test_phrase_2 = "This is a test of the text to speech system."
-        print(f"Attempting to speak: \"{test_phrase_2}\"")
+        print(f'Attempting to speak: "{test_phrase_2}"')
         await speak_text_async(test_phrase_2)
         print("Speaking finished for phrase 2.")
 
-        test_phrase_3 = "" # Test empty
-        print(f"Attempting to speak empty phrase: \"{test_phrase_3}\"")
+        test_phrase_3 = ""  # Test empty
+        print(f'Attempting to speak empty phrase: "{test_phrase_3}"')
         await speak_text_async(test_phrase_3)
         print("Speaking finished for empty phrase.")
-
 
     asyncio.run(main_example())
     logger.info("Voice output example finished.")

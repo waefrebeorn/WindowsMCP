@@ -1,9 +1,10 @@
 import pygetwindow as gw
 import pywinctl
 import logging
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
+
 
 def list_windows(title_filter: Optional[str] = None) -> List[str]:
     """
@@ -28,10 +29,13 @@ def list_windows(title_filter: Optional[str] = None) -> List[str]:
                         titles.append(window.title)
                 else:
                     titles.append(window.title)
-        logger.info(f"Found {len(titles)} windows matching filter '{title_filter if title_filter else 'None'}'.")
+        logger.info(
+            f"Found {len(titles)} windows matching filter '{title_filter if title_filter else 'None'}'."
+        )
     except Exception as e:
         logger.error(f"Error listing windows: {e}", exc_info=True)
     return titles
+
 
 def get_active_window_title() -> Optional[str]:
     """
@@ -47,13 +51,14 @@ def get_active_window_title() -> Optional[str]:
             return active_window.title
         elif active_window:
             logger.info("Active window found but has no title.")
-            return "" # Return empty string if active but no title
+            return ""  # Return empty string if active but no title
         else:
             logger.info("No active window found by pygetwindow.")
             return None
     except Exception as e:
         logger.error(f"Error getting active window title: {e}", exc_info=True)
         return None
+
 
 def focus_window(title: str) -> bool:
     """
@@ -82,7 +87,9 @@ def focus_window(title: str) -> bool:
             for win_ctl in windows:
                 if title.lower() in win_ctl.title.lower():
                     target_window_ctl = win_ctl
-                    logger.info(f"Focusing window via substring match: '{target_window_ctl.title}' for query '{title}'")
+                    logger.info(
+                        f"Focusing window via substring match: '{target_window_ctl.title}' for query '{title}'"
+                    )
                     break
 
         if target_window_ctl:
@@ -90,32 +97,54 @@ def focus_window(title: str) -> bool:
                 target_window_ctl.activate()
                 # Verify activation (sometimes activate() might not raise error but fail)
                 # A short delay might be needed for the OS to process activation
-                import time; time.sleep(0.2)
-                if gw.getActiveWindow() and gw.getActiveWindow().title == target_window_ctl.title:
-                    logger.info(f"Successfully focused window: '{target_window_ctl.title}'")
+                import time
+
+                time.sleep(0.2)
+                if (
+                    gw.getActiveWindow()
+                    and gw.getActiveWindow().title == target_window_ctl.title
+                ):
+                    logger.info(
+                        f"Successfully focused window: '{target_window_ctl.title}'"
+                    )
                     return True
                 else:
-                    logger.warning(f"Called activate on '{target_window_ctl.title}', but it did not become the active window.")
+                    logger.warning(
+                        f"Called activate on '{target_window_ctl.title}', but it did not become the active window."
+                    )
                     # Fallback attempt with pygetwindow for activation if pywinctl didn't make it active
                     gw_windows = gw.getWindowsWithTitle(target_window_ctl.title)
                     if gw_windows:
                         gw_windows[0].activate()
                         time.sleep(0.2)
-                        if gw.getActiveWindow() and gw.getActiveWindow().title == target_window_ctl.title:
-                            logger.info(f"Successfully focused window with pygetwindow fallback: '{target_window_ctl.title}'")
+                        if (
+                            gw.getActiveWindow()
+                            and gw.getActiveWindow().title == target_window_ctl.title
+                        ):
+                            logger.info(
+                                f"Successfully focused window with pygetwindow fallback: '{target_window_ctl.title}'"
+                            )
                             return True
-                    logger.warning(f"Still failed to focus window '{target_window_ctl.title}' after pygetwindow fallback.")
+                    logger.warning(
+                        f"Still failed to focus window '{target_window_ctl.title}' after pygetwindow fallback."
+                    )
                     return False
 
             except Exception as e_activate:
-                logger.error(f"Error activating window '{target_window_ctl.title}': {e_activate}", exc_info=True)
+                logger.error(
+                    f"Error activating window '{target_window_ctl.title}': {e_activate}",
+                    exc_info=True,
+                )
                 return False
         else:
-            logger.warning(f"Window with title containing '{title}' not found for focusing.")
+            logger.warning(
+                f"Window with title containing '{title}' not found for focusing."
+            )
             return False
     except Exception as e:
         logger.error(f"General error focusing window: {e}", exc_info=True)
         return False
+
 
 def get_window_geometry(title: str) -> Optional[Dict[str, int]]:
     """
@@ -133,19 +162,23 @@ def get_window_geometry(title: str) -> Optional[Dict[str, int]]:
         target_windows = gw.getWindowsWithTitle(title)
         found_window = None
 
-        if target_windows: # Exact match
+        if target_windows:  # Exact match
             found_window = target_windows[0]
-        else: # Try substring match
+        else:  # Try substring match
             all_windows = gw.getAllWindows()
             for window in all_windows:
                 if window.title and title.lower() in window.title.lower():
                     found_window = window
-                    logger.info(f"Found window for geometry via substring: '{found_window.title}' for query '{title}'")
+                    logger.info(
+                        f"Found window for geometry via substring: '{found_window.title}' for query '{title}'"
+                    )
                     break
 
         if found_window:
             if not found_window.visible or found_window.isMinimized:
-                 logger.warning(f"Window '{found_window.title}' found but is not visible or is minimized. Geometry might be inaccurate or (0,0).")
+                logger.warning(
+                    f"Window '{found_window.title}' found but is not visible or is minimized. Geometry might be inaccurate or (0,0)."
+                )
 
             # PyGetWindow returns box(left, top, right, bottom)
             # We want x, y, width, height
@@ -156,19 +189,25 @@ def get_window_geometry(title: str) -> Optional[Dict[str, int]]:
                 "y": found_window.top,
                 "width": found_window.width,
                 "height": found_window.height,
-                "title": found_window.title # Include actual matched title
+                "title": found_window.title,  # Include actual matched title
             }
             logger.info(f"Geometry for window '{found_window.title}': {geometry}")
             return geometry
         else:
-            logger.warning(f"Window with title containing '{title}' not found for geometry.")
+            logger.warning(
+                f"Window with title containing '{title}' not found for geometry."
+            )
             return None
     except Exception as e:
         logger.error(f"Error getting window geometry: {e}", exc_info=True)
         return None
 
-if __name__ == '__main__':
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(module)s - %(message)s')
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(module)s - %(message)s",
+    )
     logger.info("Window Manager Module Example")
 
     print("\n--- Listing all visible windows ---")
@@ -180,7 +219,9 @@ if __name__ == '__main__':
         print("No visible windows found or error occurred.")
 
     print("\n--- Listing windows containing 'Visual Studio Code' (example) ---")
-    vscode_titles = list_windows(title_filter="Visual Studio Code") # Adjust filter as needed
+    vscode_titles = list_windows(
+        title_filter="Visual Studio Code"
+    )  # Adjust filter as needed
     if vscode_titles:
         for i, title in enumerate(vscode_titles):
             print(f"{i+1}. {title}")
@@ -189,7 +230,7 @@ if __name__ == '__main__':
 
     print("\n--- Getting active window title ---")
     active_title = get_active_window_title()
-    if active_title is not None: # Could be empty string if active window has no title
+    if active_title is not None:  # Could be empty string if active window has no title
         print(f"Active window: '{active_title}'")
     else:
         print("Could not determine active window or no active window.")

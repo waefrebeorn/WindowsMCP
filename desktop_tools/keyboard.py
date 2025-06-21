@@ -1,8 +1,11 @@
 import pyautogui
+
 try:
     from config_manager import config
 except ImportError:
-    print("Warning: config_manager not found. Using PyAutoGUI default settings for keyboard.py.")
+    print(
+        "Warning: config_manager not found. Using PyAutoGUI default settings for keyboard.py."
+    )
     config = {}
 
 # Apply global PyAutoGUI settings from config
@@ -25,6 +28,7 @@ def keyboard_type(text: str, interval: float = 0.01) -> None:
         print(f"Error typing text: {e}")
         raise
 
+
 def keyboard_press_key(key_name: str | list[str]) -> None:
     """
     Presses a single key or a sequence of keys.
@@ -44,6 +48,7 @@ def keyboard_press_key(key_name: str | list[str]) -> None:
         print(f"Error pressing key(s): {e}")
         raise
 
+
 def keyboard_hotkey(keys: list[str]) -> None:
     """
     Presses a combination of keys simultaneously (e.g., Ctrl+C).
@@ -62,13 +67,16 @@ def keyboard_hotkey(keys: list[str]) -> None:
         print(f"Error pressing hotkey: {e}")
         raise
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     # Example usage (BE VERY CAREFUL - this will type and press keys)
     # It's recommended to have a text editor or safe window focused before running.
-    pyautogui.FAILSAFE = True # Move mouse to top-left corner to stop
+    pyautogui.FAILSAFE = True  # Move mouse to top-left corner to stop
 
     try:
-        print("Focus a text editor or a safe input field within 5 seconds to test typing...")
+        print(
+            "Focus a text editor or a safe input field within 5 seconds to test typing..."
+        )
         pyautogui.sleep(5)
 
         # Test typing
@@ -95,10 +103,16 @@ if __name__ == '__main__':
         # keyboard_hotkey(['ctrl', 'a'])
         # print("Hotkey test complete.")
 
-        print("\nExample usage section complete. Most actions are commented out for safety.")
-        print("To test, uncomment specific actions and ensure a safe window is focused and pyautogui.FAILSAFE is True.")
+        print(
+            "\nExample usage section complete. Most actions are commented out for safety."
+        )
+        print(
+            "To test, uncomment specific actions and ensure a safe window is focused and pyautogui.FAILSAFE is True."
+        )
 
     except pyautogui.FailSafeException:
-        print("PyAutoGUI FAILSAFE triggered (mouse moved to a corner). Script terminated.")
+        print(
+            "PyAutoGUI FAILSAFE triggered (mouse moved to a corner). Script terminated."
+        )
     except Exception as e:
         print(f"An error occurred during example usage: {e}")
