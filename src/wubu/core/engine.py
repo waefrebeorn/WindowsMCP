@@ -3,12 +3,24 @@
 # TTS, ASR (SpeechListener), LLM processing, and UI interactions.
 
 import json # Added for tool call argument/result processing
-from ..tts.tts_engine_manager import TTSEngineManager
+from ..tts.tts_engine_manager import TTSEngineManager, ZONOS_ENGINE_ID # Import ZONOS_ENGINE_ID for use
+from ..asr.speech_listener import SpeechListener # Import SpeechListener
 from ..llm.llm_processor import LLMProcessor
-from ..ui.wubu_ui import WuBuUI # For type hinting if needed
+from ..ui.wubu_ui import WubuApp # Actual class name for type hinting
+
 # Adjust path if desktop_tools is a top-level package or structured differently
+# Assuming desktop_tools is a sibling to the src/wubu package directory
+import sys
+import os
+# Add project root to sys.path to allow finding desktop_tools if it's a top-level dir
+# This assumes engine.py is in src/wubu/core
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
 try:
     from desktop_tools.tool_dispatcher import DesktopToolDispatcher, FunctionCall
+    from desktop_tools.context_provider import ContextProvider
     from desktop_tools.desktop_tools_definitions import get_ollama_tools_json_schema
 except ImportError:
     print("WuBuEngine: Could not import DesktopToolDispatcher or schema. Desktop tools will be unavailable.")
@@ -29,7 +41,7 @@ class WuBuEngine:
         self.wubu_name = config.get('wubu_name', "WuBu")
         print(f"Initializing {self.wubu_name} Core Engine...")
 
-        self.ui: WuBuUI | None = None  # UI handler will be set via set_ui()
+        self.ui: WubuApp | None = None  # UI handler will be set via set_ui()
 
         # 1. Initialize TTS Engine Manager
         try:
@@ -71,170 +83,297 @@ class WuBuEngine:
             print("WuBu DesktopToolDispatcher or schema function not available due to import error. Tools disabled.")
 
         self.is_processing = False
-        self.conversation_history = []
+        self.conversation_history = [] # For LLM context
+        self.asr_active_popup = None # To manage ASR status popup instance
+
+        # 4. Initialize Speech Listener
+        self.speech_listener = None
+        # Ensure ASR config is a dictionary
+        asr_config = self.config.get('asr', {})
+        if not isinstance(asr_config, dict): asr_config = {}
+        if asr_config.get('enabled', False): # Check if ASR is enabled in config
+            try:
+                self.speech_listener = SpeechListener(wubu_engine_core=self, config=asr_config)
+                print("WuBu Speech Listener initialized.")
+            except Exception as e:
+                print(f"Error initializing WuBu Speech Listener: {e}. ASR will be unavailable.")
+                self.speech_listener = None
+        else:
+            print("WuBu ASR (SpeechListener) disabled by configuration.")
+
+        # 5. Initialize Context Provider
+        self.context_provider = None
+        # Ensure desktop_tools config is a dictionary
+        desktop_tools_config = self.config.get('desktop_tools', {})
+        if not isinstance(desktop_tools_config, dict): desktop_tools_config = {}
+        if ContextProvider: # Check if class was imported
+            project_root_for_context = self.config.get('project_root_dir', project_root) # project_root from path setup
+            if desktop_tools_config.get('context_provider_enabled', True): # Default to true if desktop_tools enabled
+                try:
+                    self.context_provider = ContextProvider(project_root_str=str(project_root_for_context))
+                    print(f"WuBu Context Provider initialized for project root: {project_root_for_context}")
+                except Exception as e:
+                    print(f"Error initializing WuBu Context Provider: {e}")
+                    self.context_provider = None
+            else:
+                print("WuBu Context Provider disabled by configuration.")
+        else:
+            print("WuBu ContextProvider class not available due to import error.")
+
 
         print(f"{self.wubu_name} Core Engine initialized successfully.")
 
-    def set_ui(self, ui_handler: WuBuUI):
+    def set_ui(self, ui_handler: WubuApp): # Actual class name
         self.ui = ui_handler
         print(f"UI Handler ({type(ui_handler).__name__}) set for {self.wubu_name} Engine.")
         if self.ui:
-            # Example: self.ui.display_message("STATUS_UPDATE", f"{self.wubu_name} Engine linked to UI.")
-            pass
+            self.ui.status_label.configure(text=f"{self.wubu_name} Ready.")
 
-    def get_ui(self) -> WuBuUI | None:
+
+    def get_ui(self) -> WubuApp | None: # Actual class name
         return self.ui
 
-    def speak(self, text: str, voice_id: str = None):
+    # --- ASR Control Methods ---
+    def toggle_asr_listening(self):
+        if not self.speech_listener:
+            if self.ui: self.ui.display_message_popup("ASR Error", "Speech recognition is not available or not configured.", "error")
+            return
+
+        if self.speech_listener.is_listening():
+            self.stop_asr_listening()
+        else:
+            self.start_asr_listening()
+
+    def start_asr_listening(self):
+        if self.speech_listener and not self.speech_listener.is_listening():
+            print(f"{self.wubu_name} Engine: Starting ASR listening...")
+            if self.ui:
+                if self.asr_active_popup and self.asr_active_popup.winfo_exists():
+                    self.ui.close_popup(self.asr_active_popup)
+                self.asr_active_popup = self.ui.display_asr_popup("Listening...")
+                self.ui.mic_button.configure(text="🛑")
+            self.speech_listener.start_listening() # This is a blocking call in current SpeechListener if not threaded there.
+                                                 # SpeechListener's start_listening should be non-blocking (start a thread).
+        elif self.speech_listener and self.speech_listener.is_listening():
+            print(f"{self.wubu_name} Engine: ASR already listening.")
+
+
+    def stop_asr_listening(self):
+        if self.speech_listener and self.speech_listener.is_listening():
+            print(f"{self.wubu_name} Engine: Stopping ASR listening...")
+            self.speech_listener.stop_listening() # This processes buffer and then sets flags.
+            if self.ui:
+                if self.asr_active_popup and self.asr_active_popup.winfo_exists():
+                    # Update popup to show processing, then handle_asr_transcription will close or update further
+                    self.ui.update_popup_text(self.asr_active_popup, "Processing speech...")
+                else: # If no popup, maybe create one for "Processing..."
+                    self.asr_active_popup = self.ui.display_asr_popup("Processing speech...")
+                self.ui.mic_button.configure(text="🎤")
+        elif self.speech_listener:
+             print(f"{self.wubu_name} Engine: ASR not currently listening.")
+             if self.ui: self.ui.mic_button.configure(text="🎤") # Ensure button is reset
+
+
+    def is_asr_listening(self) -> bool:
+        return self.speech_listener.is_listening() if self.speech_listener else False
+
+    def handle_asr_transcription(self, transcribed_text: str):
+        """Called by SpeechListener with the final transcription."""
+        print(f"{self.wubu_name} Engine: ASR transcribed: '{transcribed_text}'")
+        if self.ui:
+            if self.asr_active_popup and self.asr_active_popup.winfo_exists():
+                self.ui.close_popup(self.asr_active_popup)
+                self.asr_active_popup = None
+
+            self.ui.set_prompt_input_text(transcribed_text)
+            self.ui.mic_button.configure(text="🎤") # Ensure mic button is reset
+            # Optionally, can make it auto-send:
+            # self.process_user_prompt(transcribed_text)
+
+
+    # --- Context Provider Methods ---
+    def update_editor_context(self, current_file_rel_path: str = None, cursor_pos: tuple = None, open_files_rel_paths: list = None):
+        if self.context_provider:
+            self.context_provider.update_editor_state(current_file_rel_path, cursor_pos, open_files_rel_paths)
+            if self.ui: self.ui.status_label.configure(text="Editor context updated.") # Example feedback
+        else:
+            if self.ui: self.ui.status_label.configure(text="Context Provider unavailable.")
+
+
+    # --- Main Processing Logic ---
+    def speak(self, text: str, voice_id: str = None, engine_id: str = None): # Added engine_id
         """Convenience method to make WuBu speak using the TTS manager."""
         if self.tts_manager:
-            if self.ui: self.ui.display_message("TTS_OUTPUT", text)
-            self.tts_manager.speak(text, voice_id=voice_id)
+            print(f"{self.wubu_name} Engine Speaking: {text[:50]}...")
+            self.tts_manager.speak(text, voice_id=voice_id, engine_id=engine_id)
         else:
-            fallback_msg = f"TTS UNAVAILABLE (WuBu): {text}"
+            fallback_msg = f"TTS UNAVAILABLE ({self.wubu_name}): {text}"
             print(fallback_msg)
-            if self.ui: self.ui.display_message("TTS_OUTPUT", fallback_msg)
+            if self.ui: self.ui.add_message_to_chat(self.wubu_name, fallback_msg) # Use add_message_to_chat for consistency
 
 
-    def process_text_command(self, command: str):
-        if not command:
+    def process_user_prompt(self, prompt_text: str): # Renamed from process_text_command
+        if not prompt_text:
+            if self.ui: self.ui.hide_thinking_indicator() # Ensure hidden if called with empty
             return
 
-        print(f"\n{self.wubu_name} Engine: Processing text command: '{command}'")
+        print(f"\n{self.wubu_name} Engine: Processing user prompt: '{prompt_text}'")
         if self.is_processing:
-            self.speak("I am currently processing another request. Please wait a moment, WuBu is thinking.")
+            if self.ui: self.ui.display_message_popup("Busy", f"{self.wubu_name} is currently processing. Please wait.", "info")
             return
+
+        if self.ui: self.ui.show_thinking_indicator()
 
         self.is_processing = True
-        try:
-            self.conversation_history.append({"role": "user", "content": command})
+        # Run the actual LLM processing in a separate thread
+        import threading
+        threading.Thread(target=self._threaded_process_prompt, args=(prompt_text,), daemon=True).start()
 
-            llm_response = "Error: LLM Processor not available." # Default if LLM processor fails
+    def _threaded_process_prompt(self, prompt_text: str):
+        """Helper method to run LLM processing in a thread."""
+        final_response_to_speak = None
+        try:
+            # Gather context
+            context_str_for_llm = ""
+            if self.context_provider:
+                # Max chars for snippets/full files can be configured in main config if needed
+                # Defaulting to ContextProvider's internal defaults for now.
+                context_data = self.context_provider.gather_context(prompt_text)
+
+                # Build a string representation of the context for the LLM
+                # This needs to be carefully formatted.
+                if context_data.get("current_file"):
+                    cf = context_data["current_file"]
+                    context_str_for_llm += f"Current open file: {cf['path']}\n"
+                    if cf.get("cursor_snippet_formatted"):
+                        context_str_for_llm += f"Context around cursor (line {self.context_provider.cursor_position[0] if self.context_provider.cursor_position else 'N/A'}):\n{cf['cursor_snippet_formatted']}\n\n"
+                    elif cf.get("content"): # Fallback to full content if no snippet (e.g. no cursor)
+                         context_str_for_llm += f"Full content of {cf['path']}:\n{cf['content']}\n\n"
+
+                # TODO: Add open files and @-referenced files to context_str_for_llm if needed by LLM strategy.
+                # For now, focusing on cursor context.
+
+            full_prompt_for_llm = prompt_text
+            if context_str_for_llm:
+                full_prompt_for_llm = f"{context_str_for_llm.strip()}\n\nUser query: {prompt_text}"
+
+            self.conversation_history.append({"role": "user", "content": full_prompt_for_llm}) # Log augmented prompt
+
+            llm_response_data = "Error: LLM Processor not available."
             if self.llm_processor:
-                llm_response = self.llm_processor.generate_response(
-                    prompt=command,
-                    history=self.conversation_history,
-                    tools=self.tool_schema if self.tool_dispatcher else None # Pass tool schema
+                llm_response_data = self.llm_processor.generate_response(
+                    prompt=full_prompt_for_llm, # Send the potentially augmented prompt
+                    history=self.conversation_history[:-1], # History up to the last user message
+                    tools=self.tool_schema if self.tool_dispatcher else None
                 )
             else:
                 print("Error: WuBu LLM Processor not initialized. Cannot generate response.")
-                llm_response = f"I heard you say '{command}', but my brain (LLM) is currently offline. Please check WuBu's configuration."
+                llm_response_data = f"I understood your query about '{prompt_text}', but my brain (LLM) is currently offline."
 
-            # Check if LLM response is a tool call request
-            if isinstance(llm_response, dict) and llm_response.get("type") == "tool_calls":
-                tool_calls_data = llm_response.get("data", [])
+            # --- Handle LLM Response (text or tool calls) ---
+            if isinstance(llm_response_data, dict) and llm_response_data.get("type") == "tool_calls":
+                tool_calls_data = llm_response_data.get("data", [])
                 print(f"{self.wubu_name} Engine: LLM requested tool calls: {tool_calls_data}")
+                if self.ui: self.ui.add_message_to_chat(self.wubu_name, f"[Requesting to use tools: {', '.join([tc.get('function',{}).get('name','N/A') for tc in tool_calls_data])}]")
 
-                tool_results = []
-                if self.tool_dispatcher and FunctionCall: # Ensure dispatcher and FunctionCall type are available
-                    for tc_data in tool_calls_data:
-                        # Adapt tc_data to FunctionCall object if necessary.
-                        # Ollama's tool_call format: {'function': {'name': 'tool_name', 'arguments': {'arg': 'val'}}}
-                        # DesktopToolDispatcher.execute_tool_call expects a FunctionCall object or similar dict.
-                        function_details = tc_data.get('function', {})
-                        func_name = function_details.get('name')
-                        func_args_str = function_details.get('arguments') # Usually a string from Ollama
+                tool_results = self._execute_tool_calls(tool_calls_data)
 
-                        if not func_name or func_args_str is None:
-                            print(f"Warning: Malformed tool call from LLM: {tc_data}. Skipping.")
-                            tool_results.append({
-                                "tool_call_id": tc_data.get('id', 'unknown_id'), # Ollama might provide an ID for the call
-                                "name": func_name or "unknown_tool",
-                                "response": {"error": "Malformed tool call received from LLM."}
-                            })
-                            continue
-
-                        try:
-                            func_args = json.loads(func_args_str) if isinstance(func_args_str, str) else func_args_str
-                            if not isinstance(func_args, dict):
-                                raise ValueError("Tool arguments are not a valid dictionary after parsing.")
-
-                            # Assuming DesktopToolDispatcher's execute_tool_call can take a dict
-                            # or we construct a FunctionCall object.
-                            # Let's assume it can take a dict like: {'name': name, 'arguments': args_dict, 'id': call_id}
-                            # The `id` is important for Ollama to map results back.
-                            call_id = tc_data.get('id') # Ollama provides this in its tool_calls structure
-                            if not call_id: # Should not happen if LLM follows schema with IDs
-                                import uuid
-                                call_id = uuid.uuid4().hex
-                                print(f"Warning: Tool call from LLM for '{func_name}' did not have an ID. Generated: {call_id}")
-
-                            function_call_obj = FunctionCall(id=call_id, name=func_name, args=func_args)
-
-                            # TODO: DesktopToolDispatcher.execute_tool_call might need to be async
-                            # For now, assuming it's synchronous.
-                            tool_output = self.tool_dispatcher.execute_tool_call(function_call_obj)
-                            # tool_output is expected to be like {'id': call_id, 'name': func_name, 'response': actual_tool_result_dict}
-                            tool_results.append(tool_output)
-                        except json.JSONDecodeError as je:
-                            print(f"Error decoding JSON arguments for tool '{func_name}': {func_args_str}. Error: {je}")
-                            tool_results.append({"tool_call_id": tc_data.get('id'), "name": func_name, "response": {"error": f"Invalid JSON arguments: {je}"}})
-                        except Exception as tool_exc:
-                            print(f"Error executing tool '{func_name}': {tool_exc}")
-                            # import traceback; traceback.print_exc()
-                            tool_results.append({"tool_call_id": tc_data.get('id'), "name": func_name, "response": {"error": str(tool_exc)}})
-                else:
-                    print("Warning: Tool calls requested by LLM, but no ToolDispatcher or FunctionCall type available.")
-                    # Fallback: treat as text or error
-                    final_response_text = "I wanted to use a tool, but my tool system is currently unavailable."
-                    self.conversation_history.append({"role": "assistant", "content": final_response_text})
-                    self.speak(final_response_text)
-                    self.is_processing = False
-                    return
-
-
-                # Send tool results back to LLM
-                # The history should now include the assistant's prior message (with tool_calls)
-                # and then the tool role messages with results.
-                self.conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_data}) # Record LLM's request for tools
-
+                self.conversation_history.append({"role": "assistant", "content": None, "tool_calls": tool_calls_data})
                 for res in tool_results:
-                    # Ollama expects tool role messages to have 'tool_call_id' and 'content' (result as string)
-                    # The `response` field from `execute_tool_call` might be a dict.
-                    # It needs to be JSON stringified for Ollama's 'content' field for the tool role.
                     tool_result_content_str = json.dumps(res.get("response", {"status": "error", "detail": "no response from tool"}))
                     self.conversation_history.append({
-                        "role": "tool",
-                        "tool_call_id": res.get("id"), # Use the ID from the tool_output
-                        "name": res.get("name"), # Not strictly needed by Ollama in history but good for logs
+                        "role": "tool", "tool_call_id": res.get("id"), "name": res.get("name"),
                         "content": tool_result_content_str
                     })
 
                 if self.llm_processor:
                     final_response_text = self.llm_processor.generate_response(
-                        prompt=None, # No new user prompt, just processing tool results
-                        history=self.conversation_history,
-                        tools=self.tool_schema if self.tool_dispatcher else None # Resend schema in case of iterative tool use
+                        prompt=None, history=self.conversation_history,
+                        tools=self.tool_schema if self.tool_dispatcher else None
                     )
-                    # TODO: LLM might try to call tools AGAIN. Implement max_tool_call_iterations.
-                else: # Should not happen if initial check passed
+                else:
                     final_response_text = "Error processing tool results: LLM Processor unavailable."
 
                 self.conversation_history.append({"role": "assistant", "content": final_response_text})
-                self.speak(final_response_text)
+                if self.ui: self.ui.add_message_to_chat(self.wubu_name, final_response_text)
+                final_response_to_speak = final_response_text
 
-            else: # Standard text response from LLM
-                final_response_text = str(llm_response) # Ensure it's a string
+            else: # Standard text response
+                final_response_text = str(llm_response_data)
                 self.conversation_history.append({"role": "assistant", "content": final_response_text})
-                self.speak(final_response_text)
+                if self.ui: self.ui.add_message_to_chat(self.wubu_name, final_response_text)
+                final_response_to_speak = final_response_text
 
         except Exception as e:
-            error_message = f"An error occurred in {self.wubu_name} while processing command: {e}"
+            error_message = f"An error occurred in {self.wubu_name} while processing prompt: {e}"
             print(error_message)
-            # import traceback; traceback.print_exc() # Uncomment for detailed debugging
-            if self.ui: self.ui.display_message("ERROR", error_message)
-            self.speak(f"I seem to have encountered an internal error. {self.wubu_name} apologizes. Please try something else.")
+            import traceback; traceback.print_exc()
+            if self.ui: self.ui.add_message_to_chat("System Error", error_message)
+            final_response_to_speak = f"I seem to have encountered an internal error. {self.wubu_name} apologizes."
         finally:
             self.is_processing = False
-            if len(self.conversation_history) > 20: # Limit history size
-                self.conversation_history = self.conversation_history[-20:]
+            if self.ui: self.ui.hide_thinking_indicator() # Hide thinking indicator
+
+            if final_response_to_speak and self.config.get('tts',{}).get('speak_llm_responses', True):
+                self.speak(final_response_to_speak) # Speak the final textual response
+
+            if len(self.conversation_history) > self.config.get('llm_history_length', 20):
+                self.conversation_history = self.conversation_history[-self.config.get('llm_history_length', 20):]
+
+    def _execute_tool_calls(self, tool_calls_data: list) -> list:
+        """Helper to execute tool calls and gather results."""
+        tool_results = []
+        if not self.tool_dispatcher or not FunctionCall:
+            print("Warning: Tool calls requested, but no ToolDispatcher or FunctionCall type.")
+            # Return error results for each requested call
+            for tc_data in tool_calls_data:
+                tool_results.append({
+                    "id": tc_data.get('id', 'unknown_id'),
+                    "name": tc_data.get('function', {}).get('name', 'unknown_tool'),
+                    "response": {"error": "Tool system unavailable."}
+                })
+            return tool_results
+
+        for tc_data in tool_calls_data:
+            function_details = tc_data.get('function', {})
+            func_name = function_details.get('name')
+            func_args_str = function_details.get('arguments')
+            call_id = tc_data.get('id')
+            if not call_id: # Should not happen
+                import uuid; call_id = uuid.uuid4().hex
+
+            if not func_name or func_args_str is None:
+                print(f"Warning: Malformed tool call from LLM: {tc_data}. Skipping.")
+                tool_results.append({"id": call_id, "name": func_name or "unknown_tool", "response": {"error": "Malformed tool call."}})
+                continue
+            try:
+                func_args = json.loads(func_args_str) if isinstance(func_args_str, str) else func_args_str
+                if not isinstance(func_args, dict): raise ValueError("Args not dict.")
+
+                function_call_obj = FunctionCall(id=call_id, name=func_name, args=func_args)
+                tool_output = self.tool_dispatcher.execute_tool_call(function_call_obj)
+                tool_results.append(tool_output)
+            except Exception as tool_exc:
+                print(f"Error executing/parsing tool '{func_name}': {tool_exc}")
+                tool_results.append({"id": call_id, "name": func_name, "response": {"error": str(tool_exc)}})
+        return tool_results
 
 
-    def process_voice_command(self, transcribed_text: str):
+    def handle_llm_response_for_ui(self, response_text: str): # Might be deprecated if _threaded_process_prompt handles UI
+        """Handles displaying LLM response in UI and speaking it."""
+        if self.ui:
+            self.ui.add_message_to_chat(self.wubu_name, response_text)
+
+        # Speak the response
+        if self.config.get('tts',{}).get('speak_llm_responses', True): # Check config if responses should be spoken
+            self.speak(response_text)
+
+
+    def process_voice_command(self, transcribed_text: str): # This name is fine, but it calls handle_asr_transcription now
         """Processes a command transcribed from voice input."""
-        print(f"{self.wubu_name} Engine: Received voice command (transcribed): '{transcribed_text}'")
-        # Optional: self.speak("Understood.", voice_id="feedback_voice_short_confirm")
-        self.process_text_command(transcribed_text)
+        # This method is called by SpeechListener.
+        # It should now just call handle_asr_transcription.
+        self.handle_asr_transcription(transcribed_text)
 
 
     def shutdown(self):

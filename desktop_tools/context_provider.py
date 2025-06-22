@@ -137,9 +137,47 @@ class ContextProvider:
                 context_data["current_file"] = {
                     "path": str(self.current_file_path.relative_to(self.project_root)),
                     "content": content,
-                    "hash": self.indexer.get_file_hash(self.current_file_path)
+                    "hash": self.indexer.get_file_hash(self.current_file_path),
+                    "cursor_snippet": None # Initialize
                 }
-                # TODO: Add snippet around cursor position if cursor_position is available
+
+                if self.cursor_position and content:
+                    try:
+                        # Assuming cursor_position is (1-indexed line, 1-indexed column)
+                        cursor_line_1_indexed = self.cursor_position[0]
+                        # cursor_col_1_indexed = self.cursor_position[1] # Column not used for line snippet
+
+                        if cursor_line_1_indexed > 0:
+                            lines = content.splitlines()
+                            cursor_line_0_indexed = cursor_line_1_indexed - 1
+
+                            if 0 <= cursor_line_0_indexed < len(lines):
+                                lines_around_cursor = 5 # Number of lines above and below
+                                snippet_start_line = max(0, cursor_line_0_indexed - lines_around_cursor)
+                                snippet_end_line = min(len(lines), cursor_line_0_indexed + lines_around_cursor + 1)
+
+                                snippet_lines = lines[snippet_start_line:snippet_end_line]
+                                # Add a marker for the cursor line if desired, e.g., "> "
+                                # For simplicity, just join the lines for now.
+                                # Could also include line numbers.
+                                context_data["current_file"]["cursor_snippet"] = "\n".join(snippet_lines)
+                                # Add a pointer to the exact line in the snippet
+                                if context_data["current_file"]["cursor_snippet"]:
+                                     snippet_lines_with_marker = []
+                                     for i, line_content in enumerate(snippet_lines):
+                                         actual_line_num_0_indexed = snippet_start_line + i
+                                         prefix = "> " if actual_line_num_0_indexed == cursor_line_0_indexed else "  "
+                                         snippet_lines_with_marker.append(f"{prefix}{line_content}")
+                                     context_data["current_file"]["cursor_snippet_formatted"] = "\n".join(snippet_lines_with_marker)
+
+
+                            else:
+                                print(f"Warning: Cursor line {cursor_line_1_indexed} is out of bounds for file {context_data['current_file']['path']} (total lines: {len(lines)}).")
+                        else:
+                             print(f"Warning: Invalid cursor line number {cursor_line_1_indexed}.")
+                    except Exception as e:
+                        print(f"Error generating cursor snippet: {e}")
+
 
         # 2. Open files context (excluding current file if already added)
         for f_path in self.open_file_paths:
@@ -244,6 +282,11 @@ if __name__ == '__main__':
             print(f"  Path: {context['current_file']['path']}")
             print(f"  Hash: {context['current_file']['hash']}")
             print(f"  Content: \n{context['current_file']['content'][:100]}...\n")
+            if context['current_file'].get('cursor_snippet_formatted'):
+                print(f"  Cursor Snippet (formatted):\n{context['current_file']['cursor_snippet_formatted']}\n")
+            elif context['current_file'].get('cursor_snippet'):
+                print(f"  Cursor Snippet (raw):\n{context['current_file']['cursor_snippet']}\n")
+
 
         print("Cursor Position:", context['cursor_position'])
 

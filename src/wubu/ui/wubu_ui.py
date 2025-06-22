@@ -1,167 +1,514 @@
-# Main WuBu User Interface
-# This is a placeholder for the actual UI implementation.
-# It could be a text-based console UI, a web UI (using Flask/Streamlit), or a desktop GUI (PyQt/CustomTkinter).
+import customtkinter as ctk
+import threading # For running LLM calls in a separate thread (now managed by engine)
+import os # For path checking in Zonos Dashboard
+# from ..core.llm_processor import LLMProcessor # Engine will have this
+from ..utils.resource_loader import load_config # Still needed for UI main
+from ..tts.base_tts_engine import TTSPlaybackSpeed # For Zonos Dashboard speed control
+# from ..core.engine import WuBuEngine # For type hinting, causes circular if engine imports WubuApp for type hint
 
-import threading
-import queue
-import time
+class WubuApp(ctk.CTk):
+    def __init__(self, engine): # Receives WuBuEngine instance
+        super().__init__()
 
-class WuBuUI:
-    """
-    WuBu User Interface base class / placeholder.
-    Manages interaction with the user, displaying WuBu's speech,
-    and potentially capturing user input (text or voice commands).
-    """
-    def __init__(self, wubu_core_engine):
-        self.core_engine = wubu_core_engine  # Reference to the main WuBu core
-        self.message_queue = queue.Queue()    # For receiving messages/updates from the core
-        self.input_queue = queue.Queue()      # For sending user input to the core
-        self.is_running = False
-        self.ui_thread = None
-        print("WuBuUI Initialized (Placeholder Console UI)")
+        self.engine = engine
+        self.config = engine.config # Get config from engine
 
-    def start(self):
-        """Starts the UI processing loop in a separate thread."""
-        if self.is_running:
-            print("WuBuUI is already running.")
-            return
+        # self.llm_processor = None # No longer needed, engine handles it
+        # if self.config:
+        #     try:
+        #         # self.llm_processor = LLMProcessor(config=self.config) # Done by engine
+        #         # print("WubuApp: LLMProcessor initialized.")
+        #         pass
+        #     except Exception as e:
+        #         # print(f"WubuApp: Error initializing LLMProcessor: {e}")
+        #         pass
+        # else:
+        #     # print("WubuApp: Config not provided, LLMProcessor not initialized.")
+        #     pass
 
-        self.is_running = True
-        self.ui_thread = threading.Thread(target=self._ui_loop, daemon=True)
-        self.ui_thread.start()
-        print("WuBuUI thread started.")
+        self.title(f"{self.config.get('wubu_name', 'WuBu')} Assistant GUI")
+        self.geometry("800x600")
 
-    def stop(self):
-        """Stops the UI processing loop."""
-        if not self.is_running:
-            print("WuBuUI is not running.")
-            return
+        # --- Chat History ---
+        self.chat_history = [] # To store conversation for context
 
-        self.is_running = False
-        self.message_queue.put(("QUIT", None))
-        if self.ui_thread and self.ui_thread.is_alive():
-            self.ui_thread.join(timeout=2)
-        print("WuBuUI stopped.")
+        # --- Main Frames ---
+        self.main_frame = ctk.CTkFrame(self)
+        self.main_frame.pack(fill=ctk.BOTH, expand=True, padx=10, pady=10)
 
-    def display_message(self, message_type: str, content: any):
-        """
-        Sends a message to the UI to be displayed. Called by WuBu's core engine.
-        :param message_type: Type of message (e.g., "TTS_OUTPUT", "STATUS_UPDATE", "ERROR")
-        :param content: The actual message content.
-        """
-        if not self.is_running:
-            print(f"UI_FALLBACK ({message_type}): {content}") # Fallback if UI not running
-            return
-        self.message_queue.put((message_type, content))
+        # --- Input Area ---
+        self.input_frame = ctk.CTkFrame(self.main_frame)
+        self.input_frame.pack(side=ctk.BOTTOM, fill=ctk.X, pady=(0, 10))
 
-    def get_user_input(self) -> str | None:
-        """
-        Retrieves user input from the UI (non-blocking). Called by WuBu core.
-        :return: User input string, or None if no new input.
-        """
-        try:
-            return self.input_queue.get_nowait()
-        except queue.Empty:
-            return None
+        self.prompt_entry = ctk.CTkEntry(self.input_frame, placeholder_text="Type your command or question...")
+        self.prompt_entry.pack(side=ctk.LEFT, fill=ctk.X, expand=True, padx=(0, 5))
+        self.prompt_entry.bind("<Return>", self.on_send_prompt)
 
-    def _process_message(self, message_type, content):
-        """Internal method to handle messages from the queue and update UI (console for now)."""
-        if message_type == "TTS_OUTPUT":
-            print(f"WuBu Says: \"{content}\"")
-        elif message_type == "STATUS_UPDATE":
-            print(f"WuBu Status: {content}")
-        elif message_type == "ERROR":
-            print(f"WuBu Error: {content}")
-        elif message_type == "USER_PROMPT":
-            print(f"WuBu Asks: {content}")
+        self.send_button = ctk.CTkButton(self.input_frame, text="Send", width=70, command=self.on_send_prompt)
+        self.send_button.pack(side=ctk.LEFT)
+
+        self.mic_button = ctk.CTkButton(self.input_frame, text="🎤", width=50, command=self.on_mic_button_pressed) # Placeholder
+        self.mic_button.pack(side=ctk.LEFT, padx=(5,0))
+
+
+        # --- Chat/Display Area ---
+        self.chat_display = ctk.CTkTextbox(self.main_frame, state="disabled", wrap=ctk.WORD)
+        self.chat_display.pack(fill=ctk.BOTH, expand=True)
+
+
+        # --- Status Bar (Placeholder) ---
+        self.status_bar_frame = ctk.CTkFrame(self, height=25)
+        self.status_bar_frame.pack(side=ctk.BOTTOM, fill=ctk.X, padx=10, pady=(0,5))
+
+        self.status_label = ctk.CTkLabel(self.status_bar_frame, text="Status: Ready")
+        self.status_label.pack(side=ctk.LEFT, padx=5)
+
+        self.zonos_dashboard_button = ctk.CTkButton(self.status_bar_frame, text="Zonos TTS Dashboard", command=self.open_zonos_dashboard)
+        self.zonos_dashboard_button.pack(side=ctk.RIGHT, padx=5)
+        self.zonos_dashboard_window = None
+
+
+    def open_zonos_dashboard(self):
+        if self.zonos_dashboard_window is None or not self.zonos_dashboard_window.winfo_exists():
+            # Pass the main app's TTS Engine Manager instance, or the Zonos engine directly
+            # This assumes TTSEngineManager is part of WubuApp or accessible
+            # For now, let's assume we'll pass the Zonos engine instance if available
+            # This part will be cleaner with a central WubuEngine
+            # The engine should have tts_manager
+            zonos_engine_instance = None
+            if self.engine and self.engine.tts_manager:
+                from ..tts.tts_engine_manager import ZONOS_ENGINE_ID # Safe to import here
+                zonos_engine_instance = self.engine.tts_manager.get_engine(ZONOS_ENGINE_ID)
+
+            # Pass the engine instance to the dashboard window if available
+            self.zonos_dashboard_window = ZonosDashboardWindow(self, config=self.config, zonos_engine_override=zonos_engine_instance)
+            self.zonos_dashboard_window.attributes("-topmost", True) # Keep on top
         else:
-            print(f"WuBu UI ({message_type}): {content}")
+            self.zonos_dashboard_window.focus()
 
-    def _ui_loop(self):
-        """Main UI processing loop (placeholder console version)."""
-        print("WuBu Console UI Loop started. (This is a passive display loop; input is pushed to input_queue externally).")
-        while self.is_running:
-            try:
-                message_type, content = self.message_queue.get(timeout=0.1)
-                if message_type == "QUIT":
-                    print("WuBu UI loop received QUIT signal.")
-                    break
-                self._process_message(message_type, content)
-            except queue.Empty:
-                pass
-            except Exception as e:
-                print(f"Error in WuBu UI message processing: {e}")
-            # This loop primarily processes messages from WuBu core.
-            # User input is expected to be put onto self.input_queue by another mechanism
-            # (e.g., a main CLI loop calling input() and then self.input_queue.put()).
-        print("WuBu Console UI Loop ended.")
+    def show_thinking_indicator(self):
+        """Shows the thinking popup and disables input fields."""
+        if hasattr(self, 'thinking_popup_instance') and self.thinking_popup_instance and self.thinking_popup_instance.winfo_exists():
+            self.thinking_popup_instance.focus() # Bring to front if already exists
+        else:
+            self.thinking_popup_instance = self.display_thinking_popup()
 
-if __name__ == '__main__':
-    print("Testing WuBuUI (Placeholder Console Version)")
+        self.prompt_entry.configure(state="disabled")
+        self.send_button.configure(state="disabled")
+        self.mic_button.configure(state="disabled")
+        self.status_label.configure(text=f"{self.config.get('wubu_name', 'WuBu')} is thinking...")
 
-    class MockWuBuCore:
-        def __init__(self):
-            self.ui = None
-            print("MockWuBuCore initialized.")
 
-        def process_command_from_ui(self, command):
-            print(f"MockCore: Received command from UI: '{command}'")
-            if command.lower() == "status":
-                if self.ui: self.ui.display_message("STATUS_UPDATE", "All systems nominal for WuBu.")
-            elif command.lower() == "speak":
-                if self.ui: self.ui.display_message("TTS_OUTPUT", "I am WuBu, functioning within normal parameters.")
-            elif command.lower().startswith("error"):
-                if self.ui: self.ui.display_message("ERROR", "WuBu reports a simulated error.")
+    def hide_thinking_indicator(self):
+        """Hides the thinking popup and re-enables input fields."""
+        if hasattr(self, 'thinking_popup_instance') and self.thinking_popup_instance:
+            if self.thinking_popup_instance.winfo_exists():
+                self.close_popup(self.thinking_popup_instance)
+            self.thinking_popup_instance = None
+
+        self.prompt_entry.configure(state="normal")
+        self.send_button.configure(state="normal")
+        self.mic_button.configure(state="normal")
+        self.status_label.configure(text="Status: Ready")
+        self.prompt_entry.focus()
+
+
+    def on_send_prompt(self, event=None):
+        prompt = self.prompt_entry.get()
+        if prompt:
+            self.add_message_to_chat("You", prompt) # Display user's message immediately
+            # self.chat_history.append({"role": "user", "content": prompt}) # History managed by engine
+            self.prompt_entry.delete(0, ctk.END)
+
+            if self.engine:
+                self.engine.process_user_prompt(prompt)
             else:
-                if self.ui: self.ui.display_message("USER_PROMPT", f"WuBu's mock core did not fully understand '{command}'. Try 'status', 'speak', 'error'.")
+                self.add_message_to_chat("System", "Error: WuBu Engine not available.")
+                self.hide_thinking_indicator() # Ensure UI is usable
 
-    mock_core_instance = MockWuBuCore()
-    ui_instance = WuBuUI(wubu_core_engine=mock_core_instance)
-    mock_core_instance.ui = ui_instance
+    # _get_llm_response and _finalize_llm_interaction are removed as engine handles this.
 
-    ui_instance.start()
+    def on_mic_button_pressed(self):
+        if self.engine:
+            self.engine.toggle_asr_listening()
+        else:
+            self.display_message_popup("Error", "ASR System (Engine) not available.", "error")
 
-    ui_instance.display_message("STATUS_UPDATE", "WuBu Core systems starting up...")
-    time.sleep(0.5)
-    ui_instance.display_message("TTS_OUTPUT", "Welcome to the WuBu testing facility.")
-    time.sleep(0.5)
-    ui_instance.display_message("USER_PROMPT", "Awaiting your command for WuBu:")
 
-    def mock_core_input_poller_loop(core_ref, ui_ref):
-        print("\nMockCoreInputPoller: Starting to poll WuBuUI for input...")
-        poll_count = 0
-        max_polls = 15 # Poll for a few seconds worth of checks
-        while ui_ref.is_running and poll_count < max_polls:
-            user_cmd = ui_ref.get_user_input()
-            if user_cmd:
-                print(f"MockCoreInputPoller: Got input '{user_cmd}', sending to core.")
-                core_ref.process_command_from_ui(user_cmd)
-            time.sleep(0.2) # Poll every 200ms
-            poll_count +=1
-        print("MockCoreInputPoller: Stopped polling.")
+    def set_prompt_input_text(self, text: str):
+        """Allows the engine to set text in the prompt entry (e.g., from ASR)."""
+        self.prompt_entry.delete(0, ctk.END)
+        self.prompt_entry.insert(0, text)
 
-    # Simulate user inputs being pushed to the queue (as if by a separate input handler)
-    print("\nSimulating user inputs being pushed to WuBuUI's input_queue:")
-    ui_instance.input_queue.put("status")
-    time.sleep(0.1) # give a small gap
-    ui_instance.input_queue.put("speak")
-    time.sleep(0.1)
-    ui_instance.input_queue.put("error test from main")
-    time.sleep(0.1)
-    ui_instance.input_queue.put("unknown command for wubu")
+    def add_message_to_chat(self, sender, message):
+        # This method can now be called by the engine to display LLM responses
+        self.chat_display.configure(state="normal")
+        self.chat_display.insert(ctk.END, f"{sender}: {message}\n\n")
+        self.chat_display.configure(state="disabled")
+        self.chat_display.see(ctk.END)
 
-    input_poller_thread = threading.Thread(target=mock_core_input_poller_loop, args=(mock_core_instance, ui_instance), daemon=True)
-    input_poller_thread.start()
+    def display_thinking_popup(self):
+        """Example of a 'thinking' popup."""
+        popup = ctk.CTkToplevel(self)
+        popup.geometry("300x100")
+        popup.title("WuBu")
+        # Make popup modal and on top
+        popup.transient(self)
+        popup.grab_set()
+        popup.attributes("-topmost", True)
 
-    try:
-        # Keep main test alive for a bit to see interactions
-        # Waits for the input poller to likely finish its limited polls
-        time.sleep(max_polls * 0.2 + 1) # Wait slightly longer than poller's max run time
-    except KeyboardInterrupt:
-        print("\nWuBuUI Test interrupted by user.")
-    finally:
-        print("Stopping WuBuUI from test...")
-        ui_instance.stop()
-        if input_poller_thread.is_alive():
-            input_poller_thread.join(timeout=1)
-        print("WuBuUI test finished.")
+        label = ctk.CTkLabel(popup, text="WuBu is thinking...")
+        label.pack(padx=20, pady=20, expand=True, fill=ctk.BOTH)
+
+        # Center the popup
+        self.update_idletasks() # Update main window geometry
+        x = self.winfo_x() + (self.winfo_width() // 2) - (popup.winfo_width() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"+{x}+{y}")
+
+        # This popup is now closed by _finalize_llm_interaction
+        # self.after(2000, lambda: self.close_popup(popup)) # Old demo auto-close
+
+        return popup # Return the instance so it can be managed
+
+    def display_asr_popup(self, text):
+        """Example of an ASR status popup."""
+        popup = ctk.CTkToplevel(self)
+        popup.geometry("300x100")
+        popup.title("WuBu ASR")
+        popup.transient(self)
+        popup.grab_set()
+        popup.attributes("-topmost", True)
+
+        label = ctk.CTkLabel(popup, text=text)
+        label.pack(padx=20, pady=20, expand=True, fill=ctk.BOTH)
+        self.update_idletasks()
+        x = self.winfo_x() + (self.winfo_width() // 2) - (popup.winfo_width() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"+{x}+{y}")
+        # Lifecycle of this popup will be managed by ASR interaction logic
+        # self.after(2500, lambda: self.close_popup(popup)) # Old demo auto-close
+        return popup # Return instance for external management
+
+    def update_popup_text(self, popup_instance, new_text):
+        """Updates the text of a label within a given popup window."""
+        if popup_instance and popup_instance.winfo_exists():
+            for widget in popup_instance.winfo_children():
+                if isinstance(widget, ctk.CTkLabel):
+                    widget.configure(text=new_text)
+                    break # Assuming one main label per simple popup
+
+    def close_popup(self, popup_instance):
+        if popup_instance and popup_instance.winfo_exists():
+            popup_instance.grab_release() # Use the passed argument name
+            popup_instance.destroy()
+
+    def display_confirmation_popup(self, title: str, message: str, yes_callback, no_callback=None):
+        """Displays a modal confirmation popup with Yes/No buttons."""
+        popup = ctk.CTkToplevel(self)
+        popup.title(title)
+        popup.transient(self)
+        popup.grab_set()
+        popup.attributes("-topmost", True)
+
+        label = ctk.CTkLabel(popup, text=message, wraplength=350) # Wraplength for longer messages
+        label.pack(padx=20, pady=(20,10), expand=True, fill=ctk.X)
+
+        button_frame = ctk.CTkFrame(popup, fg_color="transparent")
+        button_frame.pack(pady=(10,20))
+
+        def _on_yes():
+            self.close_popup(popup)
+            if yes_callback:
+                yes_callback()
+
+        def _on_no():
+            self.close_popup(popup)
+            if no_callback:
+                no_callback()
+
+        yes_button = ctk.CTkButton(button_frame, text="Yes", command=_on_yes, width=80)
+        yes_button.pack(side=ctk.LEFT, padx=(0,10))
+
+        no_button = ctk.CTkButton(button_frame, text="No", command=_on_no, width=80, fg_color="gray") # Different color for No
+        no_button.pack(side=ctk.LEFT)
+
+        popup.update_idletasks()
+        # Center popup
+        x = self.winfo_x() + (self.winfo_width() // 2) - (popup.winfo_width() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"{popup.winfo_width()}x{popup.winfo_height()}+{x}+{y}")
+
+        popup.protocol("WM_DELETE_WINDOW", _on_no) # Handle window close as "No"
+
+        return popup
+
+    def display_message_popup(self, title: str, message: str, message_type: str = 'info'):
+        """Displays a simple modal message popup with an OK button."""
+        popup = ctk.CTkToplevel(self)
+        popup.title(title)
+        popup.transient(self)
+        popup.grab_set()
+        popup.attributes("-topmost", True)
+
+        # TODO: Could add an icon based on message_type if desired, e.g. using CTkImage
+        # icon_label = ctk.CTkLabel(popup, text="[ICON]")
+        # icon_label.pack(side=ctk.LEFT, padx=(10,0))
+
+        label = ctk.CTkLabel(popup, text=message, wraplength=350) # Wraplength for longer messages
+        label.pack(padx=20, pady=20, expand=True, fill=ctk.X)
+
+        ok_button = ctk.CTkButton(popup, text="OK", command=lambda: self.close_popup(popup), width=80)
+        ok_button.pack(pady=(0,20))
+
+        popup.update_idletasks()
+        # Center popup
+        x = self.winfo_x() + (self.winfo_width() // 2) - (popup.winfo_width() // 2)
+        y = self.winfo_y() + (self.winfo_height() // 2) - (popup.winfo_height() // 2)
+        popup.geometry(f"{popup.winfo_width()}x{popup.winfo_height()}+{x}+{y}")
+
+        popup.protocol("WM_DELETE_WINDOW", lambda: self.close_popup(popup)) # Handle window close
+
+        return popup
+
+
+def main():
+    # Ensure an X server is running if on Linux and not using a virtual framebuffer
+    # import os
+    # if os.name == "posix" and not os.environ.get("DISPLAY"):
+    #     print("Warning: DISPLAY environment variable not set. UI may not appear.")
+    #     # For headless environments, you might need to use Xvfb or similar.
+    #     # Example: os.environ['DISPLAY'] = ':0'
+
+    config = load_config() # Load wubu_config.yaml from project root
+    if not config:
+        print("CRITICAL: WuBu UI could not load wubu_config.yaml. LLM and other features will be impaired.")
+        # Create a minimal default config for UI to run with basic info
+        config = {
+            'wubu_name': "WuBu (Config Missing!)",
+            'llm': {'provider': 'none'}, # Indicate no LLM provider
+            'logging': {'level': "DEBUG"} # Default logging
+        }
+
+
+    ctk.set_appearance_mode("System")  # Modes: "System" (default), "Dark", "Light"
+    ctk.set_default_color_theme("blue")  # Themes: "blue" (default), "green", "dark-blue"
+
+    app = WubuApp(config=config) # Pass config to the app
+    app.mainloop()
+
+if __name__ == "__main__":
+    main()
+
+
+class ZonosDashboardWindow(ctk.CTkToplevel):
+    def __init__(self, master, config: dict, zonos_engine_override=None): # Added zonos_engine_override
+        super().__init__(master)
+        self.config = config
+        self.master_app = master # Reference to the main WubuApp if needed
+
+        self.zonos_engine = zonos_engine_override
+
+        if not self.zonos_engine:
+            # Fallback direct initialization if no engine was passed (e.g. during development/testing)
+            # This path should ideally not be taken in the final integrated app.
+            print("ZonosDashboard: WARNING - Zonos engine not passed directly. Attempting direct init as fallback.")
+            from ..tts.zonos_voice import ZonosVoice
+            from ..tts.tts_engine_manager import ZONOS_ENGINE_ID # For config key
+
+            # Try to get Zonos engine from main app's engine if master_app.engine exists and has tts_manager
+            # This is still a bit coupled, WubuEngine should ideally pass the specific engine.
+            if hasattr(self.master_app, 'engine') and self.master_app.engine and \
+               hasattr(self.master_app.engine, 'tts_manager') and self.master_app.engine.tts_manager:
+                 self.zonos_engine = self.master_app.engine.tts_manager.get_engine(ZONOS_ENGINE_ID)
+
+            if not self.zonos_engine: # If still not found, try full direct init
+                zonos_config_section = self.config.get('tts', {}).get('zonos_voice_engine', {})
+                if zonos_config_section.get('enabled', False):
+                    try:
+                        self.zonos_engine = ZonosVoice(
+                            language=zonos_config_section.get('language', 'en'),
+                            default_voice=zonos_config_section.get('default_reference_audio_path'),
+                            config=zonos_config_section
+                        )
+                        if not self.zonos_engine.zonos_model:
+                            self.zonos_engine = None
+                            print("ZonosDashboard: Fallback direct init of ZonosVoice failed to load model.")
+                    except Exception as e:
+                        print(f"ZonosDashboard: Error during fallback direct init of ZonosVoice: {e}")
+                        self.zonos_engine = None
+                else:
+                    print("ZonosDashboard: Zonos is not enabled in config for fallback direct init.")
+
+        if not self.zonos_engine:
+            self.title("Zonos TTS (Engine Error)")
+            label = ctk.CTkLabel(self, text="Zonos TTS Engine not available or failed to load.\nPlease check configuration and ensure Zonos & eSpeak NG are installed.")
+            label.pack(padx=20, pady=20)
+            self.after(100, self.focus) # Ensure it gets focus to show message
+            return # Don't build the rest of the UI
+
+        self.title("Zonos TTS Dashboard")
+        self.geometry("600x700")
+        self.transient(master) # Keep on top of master
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        self.current_speaker_embedding = None
+        self.reference_audio_path = ctk.StringVar()
+
+        # --- UI Elements ---
+        main_frame = ctk.CTkFrame(self)
+        main_frame.pack(fill=ctk.BOTH, expand=True, padx=10, pady=10)
+
+        # 1. Reference Audio Selection
+        ref_audio_frame = ctk.CTkFrame(main_frame)
+        ref_audio_frame.pack(fill=ctk.X, pady=(0,10))
+        ctk.CTkLabel(ref_audio_frame, text="Reference Audio (.wav, .mp3):").pack(side=ctk.LEFT, padx=(0,5))
+        self.ref_audio_entry = ctk.CTkEntry(ref_audio_frame, textvariable=self.reference_audio_path, width=300)
+        self.ref_audio_entry.pack(side=ctk.LEFT, expand=True, fill=ctk.X, padx=(0,5))
+        self.browse_button = ctk.CTkButton(ref_audio_frame, text="Browse", command=self.browse_reference_audio, width=80)
+        self.browse_button.pack(side=ctk.LEFT)
+
+        # 2. Speaker Embedding
+        embedding_frame = ctk.CTkFrame(main_frame)
+        embedding_frame.pack(fill=ctk.X, pady=5)
+        self.generate_embedding_button = ctk.CTkButton(embedding_frame, text="Generate Speaker Embedding", command=self.generate_embedding)
+        self.generate_embedding_button.pack(side=ctk.LEFT, padx=(0,10))
+        self.embedding_status_label = ctk.CTkLabel(embedding_frame, text="Status: No embedding generated.")
+        self.embedding_status_label.pack(side=ctk.LEFT)
+
+        # 3. Text for Synthesis
+        ctk.CTkLabel(main_frame, text="Text to Synthesize:").pack(fill=ctk.X, pady=(10,0))
+        self.text_input = ctk.CTkTextbox(main_frame, height=150, wrap=ctk.WORD)
+        self.text_input.pack(fill=ctk.BOTH, expand=True, pady=5)
+        self.text_input.insert("1.0", "Hello world, this is a test of the Zonos Text to Speech engine integrated into WuBu.")
+
+        # 4. Playback Speed (Optional - Zonos has 'rate')
+        speed_frame = ctk.CTkFrame(main_frame)
+        speed_frame.pack(fill=ctk.X, pady=5)
+        ctk.CTkLabel(speed_frame, text="Playback Speed:").pack(side=ctk.LEFT, padx=(0,10))
+        self.speed_var = ctk.StringVar(value="NORMAL")
+        speed_options = [s.name for s in TTSPlaybackSpeed]
+        self.speed_menu = ctk.CTkOptionMenu(speed_frame, variable=self.speed_var, values=speed_options)
+        self.speed_menu.pack(side=ctk.LEFT)
+
+        # TODO: Add controls for Pitch, Energy if desired
+
+        # 5. Synthesize and Play Button
+        self.synthesize_button = ctk.CTkButton(main_frame, text="Synthesize and Play", command=self.synthesize_and_play)
+        self.synthesize_button.pack(pady=10)
+
+        self.synthesis_status_label = ctk.CTkLabel(main_frame, text="")
+        self.synthesis_status_label.pack(fill=ctk.X)
+
+        self.after(100, self.focus) # Bring window to front
+
+    def browse_reference_audio(self):
+        from tkinter import filedialog
+        filepath = filedialog.askopenfilename(
+            title="Select Reference Audio",
+            filetypes=(("Audio Files", "*.wav *.mp3"), ("All files", "*.*"))
+        )
+        if filepath:
+            self.reference_audio_path.set(filepath)
+            self.current_speaker_embedding = None # Reset embedding if new file selected
+            self.embedding_status_label.configure(text="Status: New reference audio selected. Generate embedding.")
+
+    def generate_embedding(self):
+        path = self.reference_audio_path.get()
+        if not path:
+            self.embedding_status_label.configure(text="Status: No reference audio selected.")
+            self.master_app.display_message_popup("Error", "Please select a reference audio file first.", "error")
+            return
+        if not os.path.exists(path):
+            self.embedding_status_label.configure(text=f"Status: File not found: {path}")
+            self.master_app.display_message_popup("Error", f"Reference audio file not found:\n{path}", "error")
+            return
+
+        self.embedding_status_label.configure(text="Status: Generating embedding...")
+        self.update_idletasks() # Ensure label updates
+
+        try:
+            # This call is synchronous, might freeze UI for a moment.
+            # For long operations, consider threading. Zonos embedding is usually fast.
+            self.current_speaker_embedding = self.zonos_engine._get_speaker_embedding(path) # Accessing protected member for now
+            if self.current_speaker_embedding is not None:
+                self.embedding_status_label.configure(text="Status: Speaker embedding ready.")
+            else:
+                self.embedding_status_label.configure(text="Status: Failed to generate embedding.")
+                self.master_app.display_message_popup("Error", "Failed to generate speaker embedding. Check console for Zonos logs.", "error")
+
+        except Exception as e:
+            self.current_speaker_embedding = None
+            self.embedding_status_label.configure(text=f"Status: Error generating embedding.")
+            self.master_app.display_message_popup("Embedding Error", f"Error: {e}", "error")
+
+
+    def synthesize_and_play(self):
+        text_to_speak = self.text_input.get("1.0", ctk.END).strip()
+        if not text_to_speak:
+            self.synthesis_status_label.configure(text="Status: No text to synthesize.")
+            self.master_app.display_message_popup("Input Error", "Please enter some text to synthesize.", "error")
+            return
+
+        if not self.current_speaker_embedding:
+            # Option: try to use default_voice from ZonosEngine if set, or prompt to generate.
+            # For now, require explicit embedding generation in this UI.
+            self.synthesis_status_label.configure(text="Status: No speaker embedding. Please generate one first.")
+            self.master_app.display_message_popup("Input Error", "Please generate a speaker embedding first using a reference audio.", "error")
+
+            return
+
+        selected_speed_name = self.speed_var.get()
+        playback_speed = TTSPlaybackSpeed[selected_speed_name]
+
+        self.synthesis_status_label.configure(text="Status: Synthesizing audio...")
+        self.synthesize_button.configure(state="disabled")
+        self.update_idletasks()
+
+        def _synthesis_task():
+            try:
+                # Use ZonosEngine's synthesize_to_bytes, then its play method
+                # The voice_id for ZonosEngine is the reference audio path used for the current_speaker_embedding
+                # However, ZonosVoice's synthesize_to_bytes itself takes the speaker_embedding directly if we modify it,
+                # or we rely on it re-calculating from path if we pass self.reference_audio_path.get().
+                # For efficiency, it's better if ZonosVoice can take a pre-made embedding.
+                # Let's assume ZonosVoice.synthesize_to_bytes can take an optional 'speaker_embedding' kwarg.
+                # If not, ZonosVoice needs a way to use a cached/passed embedding.
+                # For now, we pass the path, and ZonosVoice's _get_speaker_embedding will use its cache.
+
+                audio_bytes = self.zonos_engine.synthesize_to_bytes(
+                    text_to_speak,
+                    voice_id=self.reference_audio_path.get(), # Path used for current embedding
+                    speed=playback_speed
+                    # TODO: Add pitch, energy kwargs if UI controls are added
+                )
+
+                if audio_bytes:
+                    self.synthesis_status_label.configure(text="Status: Playing audio...")
+                    self.zonos_engine.play_synthesized_bytes(audio_bytes, speed=playback_speed) # Speed here is illustrative; Zonos applies during synthesis
+                    self.synthesis_status_label.configure(text="Status: Synthesis and playback complete.")
+                else:
+                    self.synthesis_status_label.configure(text="Status: Synthesis failed. Check logs.")
+                    self.master_app.display_message_popup("Synthesis Error", "Failed to synthesize audio. See console for details.", "error")
+
+            except Exception as e:
+                self.synthesis_status_label.configure(text=f"Status: Error during synthesis/playback.")
+                self.master_app.display_message_popup("Error", f"An error occurred: {e}", "error")
+            finally:
+                self.synthesize_button.configure(state="normal")
+
+        threading.Thread(target=_synthesis_task, daemon=True).start()
+
+
+    def on_close(self):
+        # Clean up resources if necessary, e.g., clear Zonos model from GPU if loaded by this window
+        # For now, just destroy the window.
+        # If ZonosVoice was instantiated by this window, it should be cleaned up.
+        # If self.zonos_engine was created by this window:
+        # if hasattr(self, 'zonos_engine_is_local') and self.zonos_engine_is_local and self.zonos_engine:
+        #     del self.zonos_engine # or a proper cleanup method
+        self.destroy()
+        if self.master_app:
+             self.master_app.zonos_dashboard_window = None # Unset reference in main app
+# main() function and if __name__ == "__main__": block removed.
+# This will be handled by a new main.py at the project root.
