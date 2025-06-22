@@ -1,8 +1,13 @@
 import hashlib
 import os
+import subprocess
+import platform
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 import fnmatch
+# Assuming config_manager is accessible. For now, we'll simulate its behavior for the new flag.
+# from config_manager import config
+
 
 class FileNode:
     """Represents a file with its path and hash."""
@@ -54,10 +59,114 @@ class ContextIndexer:
         self.merkle_root: Optional[MerkleNode] = None
         self.file_hashes: Dict[Path, str] = {} # Stores individual file hashes path -> hash
         self.ignore_patterns: List[str] = []
-        self.WUBU_IGNORE_FILE = ".wubuignore" # Or .cursorignore as per original doc
+
+        self.WUBU_IGNORE_FILE = ".wubuignore"
+
+        # Simulate config access for the new flag
+        # Real implementation would use: self.use_windows_search = config.get("USE_WINDOWS_SEARCH_INDEX", True)
+        self.use_windows_search = True # Default to trying Windows Search if on Windows
 
         if not self.project_root.is_dir():
             raise ValueError(f"Project root not found or is not a directory: {self.project_root}")
+
+    def _is_windows(self) -> bool:
+        return platform.system() == "Windows"
+
+    def _fetch_files_from_windows_search(self) -> Optional[List[Path]]:
+        if not self._is_windows() or not self.use_windows_search:
+            return None
+
+        print("[Indexer] Attempting to fetch files using Windows Search Index...")
+        # Ensure project_root is absolute and correctly escaped for PowerShell
+        abs_project_root = str(self.project_root.resolve())
+
+        # Using a simpler query for ItemPathDisplay and filtering for files only.
+        # More complex filtering (like .git) is better handled in Python after getting the list.
+        # SCOPE works on folder paths. For file paths, use System.ItemFolderPathDisplay
+        ps_query = f"""
+        $ErrorActionPreference = 'Stop'
+        $items = @()
+        $connection = New-Object System.Data.OleDb.OleDbConnection
+        $connection.ConnectionString = "Provider=Search.CollatorDSO;Extended Properties='Application=Windows';"
+        try {{
+            $connection.Open()
+            # Query for files within the folder path and its subfolders
+            $sqlQuery = "SELECT System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.ItemType <> 'Directory' AND System.ItemFolderPathDisplay LIKE '{abs_project_root.replace("'", "''")}%'"
+            # Alternative using SCOPE if ItemFolderPathDisplay is not granular enough or too slow:
+            # $sqlQuery = "SELECT System.ItemPathDisplay FROM SYSTEMINDEX WHERE System.ItemType <> 'Directory' AND SCOPE = 'file:{abs_project_root.replace("'", "''")}'"
+
+            $command = New-Object System.Data.OleDb.OleDbCommand($sqlQuery, $connection)
+            $reader = $command.ExecuteReader()
+            while ($reader.Read()) {{
+                $items += $reader.GetString(0)
+            }}
+        }} catch {{
+            Write-Warning "Windows Search Index query failed: $($_.Exception.Message)"
+            # Exit with a specific code or write to stderr to indicate failure to Python
+            exit 1
+        }} finally {{
+            if ($connection.State -eq 'Open') {{
+                $connection.Close()
+            }}
+        }}
+        $items | ForEach-Object {{ Write-Output $_ }}
+        """
+        try:
+            # Using PowerShell Core (pwsh) if available, otherwise fallback to Windows PowerShell
+            # Check for pwsh first
+            ps_executable = "pwsh"
+            try:
+                subprocess.check_output([ps_executable, "-Command", "Write-Host test"], stderr=subprocess.STDOUT, timeout=5)
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                ps_executable = "powershell" # Fallback to Windows PowerShell
+
+            process = subprocess.run(
+                [ps_executable, "-NoProfile", "-NonInteractive", "-Command", ps_query],
+                capture_output=True,
+                text=True,
+                encoding='utf-8', # Ensure correct encoding
+                timeout=30 # Generous timeout for the search query
+            )
+
+            if process.returncode == 0:
+                file_paths_str = process.stdout.strip().splitlines()
+                # Filter out empty lines just in case
+                file_paths = [Path(p_str) for p_str in file_paths_str if p_str.strip()]
+
+                # Additional check: ensure returned paths are actually within project_root
+                # Windows search with SCOPE can sometimes be a bit broad or include parent items if not careful with query
+                valid_paths = []
+                resolved_project_root = self.project_root.resolve()
+                for p in file_paths:
+                    try:
+                        resolved_p = p.resolve()
+                        if resolved_project_root in resolved_p.parents or resolved_p == resolved_project_root:
+                             # This check is to ensure it's not a parent but actually inside or the root itself (if root is a file somehow)
+                             # More accurately, check if resolved_p starts with resolved_project_root for files
+                            if str(resolved_p).startswith(str(resolved_project_root)):
+                                valid_paths.append(resolved_p) # Store resolved absolute paths
+                    except Exception: # Catch resolution errors for weird paths
+                        pass
+
+                print(f"[Indexer] Windows Search found {len(valid_paths)} files under project root.")
+                return valid_paths
+            else:
+                print(f"[Indexer] Windows Search Index query script failed. Return code: {process.returncode}")
+                if process.stderr:
+                    print(f"[Indexer] PowerShell stderr: {process.stderr.strip()}")
+                elif process.stdout: # Sometimes errors go to stdout with Write-Warning
+                     print(f"[Indexer] PowerShell stdout (may contain warnings): {process.stdout.strip()}")
+                return None
+        except FileNotFoundError:
+            print("[Indexer] PowerShell not found. Cannot query Windows Search Index.")
+            return None
+        except subprocess.TimeoutExpired:
+            print("[Indexer] Windows Search Index query timed out.")
+            return None
+        except Exception as e:
+            print(f"[Indexer] Error during Windows Search Index query: {e}")
+            return None
+
 
     def _load_ignore_patterns(self):
         """Loads patterns from .gitignore and .wubuignore files."""
@@ -145,22 +254,65 @@ class ContextIndexer:
         self.file_hashes.clear()
         self._load_ignore_patterns()
 
+        collected_file_paths: List[Path] = []
+
+        # Try Windows Search Index first
+        if self._is_windows() and self.use_windows_search:
+            search_results = self._fetch_files_from_windows_search()
+            if search_results is not None:
+                collected_file_paths = search_results
+                print(f"[Indexer] Using {len(collected_file_paths)} files from Windows Search Index.")
+            else:
+                print("[Indexer] Windows Search Index failed or disabled, falling back to manual directory scan.")
+                # Fallback to os.walk is handled by collected_file_paths remaining empty here
+
+        if not collected_file_paths: # If Windows search was not used, disabled, or failed
+            print("[Indexer] Performing manual directory scan (os.walk)...")
+            paths_from_os_walk = []
+            for root, dirs, files in os.walk(self.project_root, topdown=True):
+                current_path = Path(root)
+
+                # Filter directories based on ignore patterns before further traversal
+                original_dirs_count = len(dirs)
+                dirs[:] = [d_name for d_name in dirs if not self._should_ignore(current_path / d_name)]
+                # if len(dirs) < original_dirs_count:
+                #     print(f"[Indexer] Pruned {original_dirs_count - len(dirs)} subdirectories in {current_path.relative_to(self.project_root)}")
+
+                for name in files:
+                    paths_from_os_walk.append(current_path / name)
+            collected_file_paths = paths_from_os_walk
+            print(f"[Indexer] Manual directory scan found {len(collected_file_paths)} candidate files.")
+
         file_nodes: List[FileNode] = []
+        processed_count = 0
+        ignored_count = 0
 
-        for root, dirs, files in os.walk(self.project_root, topdown=True):
-            current_path = Path(root)
+        for file_path_abs in collected_file_paths:
+            # Ensure file_path is absolute and resolved before _should_ignore if it came from search index
+            # os.walk already gives absolute if project_root is absolute
+            if not file_path_abs.is_absolute():
+                file_path_abs = (self.project_root / file_path_abs).resolve() # Should already be resolved if from win search
 
-            # Filter directories based on ignore patterns
-            # os.walk allows modifying dirs in-place to prune search
-            dirs[:] = [d for d in dirs if not self._should_ignore(current_path / d)]
+            if not self._should_ignore(file_path_abs):
+                # Additional check: ensure file actually exists, as search index might be stale
+                if not file_path_abs.is_file():
+                    # print(f"[Indexer] Warning: File listed by source no longer exists or is not a file: {file_path_abs}")
+                    ignored_count +=1 # Count it as 'ignored' due to staleness
+                    continue
 
-            for name in files:
-                file_path = current_path / name
-                if not self._should_ignore(file_path):
-                    file_hash = hash_file_content(file_path)
-                    if file_hash: # Only include files that could be hashed
-                        self.file_hashes[file_path] = file_hash
-                        file_nodes.append(FileNode(file_path, file_hash))
+                file_hash = hash_file_content(file_path_abs)
+                if file_hash: # Only include files that could be hashed
+                    # Store relative path in FileNode if desired, but absolute for file_hashes keys
+                    # For consistency, let's assume FileNode paths are absolute for now.
+                    self.file_hashes[file_path_abs] = file_hash
+                    file_nodes.append(FileNode(file_path_abs, file_hash))
+                processed_count +=1
+            else:
+                ignored_count += 1
+
+        # print(f"[Indexer] Processed: {processed_count}, Ignored: {ignored_count}, Total from source: {len(collected_file_paths)}")
+        print(f"[Indexer] After filtering ignored files: {len(file_nodes)} files to be included in Merkle tree.")
+
 
         # Sort file_nodes by path to ensure consistent tree structure
         file_nodes.sort(key=lambda fn: fn.path)

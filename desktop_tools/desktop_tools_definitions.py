@@ -313,6 +313,21 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 required=["title"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="control_active_window",
+            description="Controls the active window (minimize, maximize, restore, close) or gets its title/geometry.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "action": types.Schema(
+                        type=types.Type.STRING,
+                        enum=["minimize", "maximize", "restore", "close", "get_title", "get_geometry"],
+                        description="The action to perform on the active window.",
+                    )
+                },
+                required=["action"],
+            ),
+        ),
         # File System Tools
         types.FunctionDeclaration(
             name="list_directory",
@@ -349,20 +364,20 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
         ),
         types.FunctionDeclaration(
             name="write_text_file",
-            description="Writes text content to a specified file. Can optionally overwrite if the file already exists.",
+            description="Writes text content to a specified file. WARNING: Can overwrite existing files if 'overwrite' is true.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
                     "path": types.Schema(type=types.Type.STRING, description="The full path to the file to be written."),
                     "content": types.Schema(type=types.Type.STRING, description="The text content to write into the file."),
-                    "overwrite": types.Schema(type=types.Type.BOOLEAN, nullable=True, description="If True, overwrite the file if it exists. Defaults to False."),
+                    "overwrite": types.Schema(type=types.Type.BOOLEAN, nullable=True, default=False, description="If True, overwrite the file if it exists. Defaults to False. Ensure user intent is clear before overwriting."),
                 },
                 required=["path", "content"],
             ),
         ),
         types.FunctionDeclaration(
             name="append_text_to_file",
-            description="Appends text content to an existing file. Creates the file if it does not exist.",
+            description="Appends text content to an existing file. Creates the file (including parent directories) if it does not exist.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
@@ -373,47 +388,48 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
             ),
         ),
         types.FunctionDeclaration(
-            name="create_directory",
-            description="Creates a new directory at the specified path. Parent directories will be created if they don't exist.",
+            name="create_folder", # Renamed to match file_system_manager.py more closely
+            description="Creates a new folder at the specified path. Parent directories will be created if they don't exist. CAUTION: Modifies file system.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="The full path where the new directory should be created."),
+                    "path": types.Schema(type=types.Type.STRING, description="The full path where the new folder should be created."),
                 },
                 required=["path"],
             ),
         ),
         types.FunctionDeclaration(
-            name="delete_file_or_directory",
-            description="Deletes a specified file or an entire directory (recursively). Use with caution.",
+            name="delete_item", # Renamed
+            description="Deletes a specified file or folder. WARNING: This operation is destructive and can lead to data loss. Use with extreme caution. Deleting non-empty folders requires explicit confirmation via 'force_delete_non_empty_folder' parameter.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "path": types.Schema(type=types.Type.STRING, description="The full path of the file or directory to delete."),
+                    "path": types.Schema(type=types.Type.STRING, description="The full path of the file or folder to delete."),
+                    "force_delete_non_empty_folder": types.Schema(type=types.Type.BOOLEAN, nullable=True, default=False, description="Required to be true to delete a non-empty folder. Defaults to False. EXTREME CAUTION ADVISED."),
                 },
                 required=["path"],
             ),
         ),
         types.FunctionDeclaration(
-            name="move_file_or_directory",
-            description="Moves a file or directory from a source path to a destination path.",
+            name="move_or_rename_item", # Renamed
+            description="Moves or renames a file or folder from a source path to a destination path/name. CAUTION: Modifies file system.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or directory."),
-                    "destination_path": types.Schema(type=types.Type.STRING, description="The full path for the destination. If it's a directory, the source will be moved into it."),
+                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or folder."),
+                    "new_path_or_name": types.Schema(type=types.Type.STRING, description="The new full path or new name for the item. If just a name, item is renamed in its current directory."),
                 },
-                required=["source_path", "destination_path"],
+                required=["source_path", "new_path_or_name"],
             ),
         ),
         types.FunctionDeclaration(
-            name="copy_file_or_directory",
-            description="Copies a file or directory from a source path to a destination path. Overwrites destination file if it exists.",
+            name="copy_item", # Renamed
+            description="Copies a file or folder from a source path to a destination path. CAUTION: Modifies file system. Overwrites destination file if it exists.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or directory."),
-                    "destination_path": types.Schema(type=types.Type.STRING, description="The full path for the destination. If it's a directory, the source will be copied into it."),
+                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or folder."),
+                    "destination_path": types.Schema(type=types.Type.STRING, description="The full path for the destination. If destination is a directory, the source will be copied into it."),
                 },
                 required=["source_path", "destination_path"],
             ),
@@ -427,6 +443,27 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                     "path": types.Schema(type=types.Type.STRING, description="The full path to the file or directory."),
                 },
                 required=["path"],
+            ),
+        ),
+        # --- System Information Tool ---
+        types.FunctionDeclaration(
+            name="get_system_information",
+            description="Retrieves system information like CPU usage, memory usage, disk usage, or battery status.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "query": types.Schema(
+                        type=types.Type.STRING,
+                        enum=["cpu_usage", "memory_usage", "disk_usage", "battery_status"],
+                        description="The type of system information to retrieve.",
+                    ),
+                    "path": types.Schema(
+                        type=types.Type.STRING,
+                        nullable=True,
+                        description="Optional. Filesystem path for 'disk_usage' query (e.g., 'C:/' or '/'). Defaults to the root of the current drive if not specified for disk_usage.",
+                    ),
+                },
+                required=["query"],
             ),
         ),
         # --- Application Management Tools ---
@@ -524,14 +561,23 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
         ),
         # --- Basic Web Interaction Tool ---
         types.FunctionDeclaration(
-            name="open_url_in_default_browser",
-            description="Opens a given URL in the system's default web browser.",
+            name="open_url_or_search_web",
+            description="Opens a URL in the default web browser, or performs a web search using the default browser.",
             parameters=types.Schema(
                 type=types.Type.OBJECT,
                 properties={
-                    "url": types.Schema(type=types.Type.STRING, description="The full URL to open (e.g., 'https://www.google.com'). Must include http:// or https:// scheme."),
+                    "query_or_url": types.Schema(
+                        type=types.Type.STRING,
+                        description="The full URL to open (e.g., 'https://www.example.com') or a search query string (e.g., 'latest AI news')."
+                    ),
+                    "is_search": types.Schema(
+                        type=types.Type.BOOLEAN,
+                        nullable=True,
+                        default=False,
+                        description="If True, treats 'query_or_url' as a search term and uses a search engine. If False (default), treats 'query_or_url' as a direct URL to open. Prepend https:// if scheme is missing for direct URLs.",
+                    ),
                 },
-                required=["url"],
+                required=["query_or_url"],
             ),
         ),
 

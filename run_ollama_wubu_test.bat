@@ -5,15 +5,16 @@ SET "SCRIPT_EXIT_CODE=0"
 REM === Configuration ===
 SET "VENV_DIR=venv"
 SET "AGENT_SCRIPT=main.py"
-SET "AGENT_NAME=Windows Desktop AI Assistant"
-SET "SCRIPT_NAME=run_ollama_agent_test.bat"
+SET "AGENT_NAME=WuBu"
+SET "SCRIPT_NAME=run_ollama_wubu_test.bat"
 
 REM Default model for testing. Can be overridden by editing this script.
 SET "OLLAMA_TEST_MODEL=qwen2.5-coder:7b-instruct-q4_K_M" 
 REM The test command file used by main.py's --test_file argument
 SET "TEST_COMMAND_FILE=test_commands.txt"
 
-ECHO [!SCRIPT_NAME!] Starting %AGENT_NAME% Test Script (Ollama Provider)...
+ECHO [!SCRIPT_NAME!] Starting !AGENT_NAME! Test Script (Ollama Provider)...
+ECHO [!SCRIPT_NAME!] WuBu will index files in the current directory: "%cd%"
 
 REM === Activate Virtual Environment ===
 CALL :ActivateVenv
@@ -40,7 +41,7 @@ IF !ERRORLEVEL! NEQ 0 (
 )
 
 REM === Check for Test Command File ===
-ECHO [!SCRIPT_NAME!] Looking for test command file: "!TEST_COMMAND_FILE!"
+ECHO [!SCRIPT_NAME!] Looking for test command file: "%~dp0!TEST_COMMAND_FILE!"
 IF NOT EXIST "%~dp0!TEST_COMMAND_FILE!" (
     ECHO [!SCRIPT_NAME!] ERROR: Test command file "!TEST_COMMAND_FILE!" not found in "%~dp0".
     ECHO [!SCRIPT_NAME!] Please create this file or check the name.
@@ -50,25 +51,25 @@ IF NOT EXIST "%~dp0!TEST_COMMAND_FILE!" (
 ECHO [!SCRIPT_NAME!] Test command file found.
 
 REM === Run the Agent with Test File ===
-ECHO [!SCRIPT_NAME!] Starting the %AGENT_NAME% with Ollama model "!OLLAMA_TEST_MODEL!" using test file "!TEST_COMMAND_FILE!"...
-ECHO [!SCRIPT_NAME!] Command: python "%~dp0%AGENT_SCRIPT%" --llm_provider ollama --ollama_model "!OLLAMA_TEST_MODEL!" --test_file "%~dp0!TEST_COMMAND_FILE!"
-python "%~dp0%AGENT_SCRIPT%" --llm_provider ollama --ollama_model "!OLLAMA_TEST_MODEL!" --test_file "%~dp0!TEST_COMMAND_FILE!"
+ECHO [!SCRIPT_NAME!] Starting the !AGENT_NAME! with Ollama model "!OLLAMA_TEST_MODEL!" using test file "%~dp0!TEST_COMMAND_FILE!"...
+ECHO [!SCRIPT_NAME!] Command: python "%~dp0!AGENT_SCRIPT!" --llm_provider ollama --ollama_model "!OLLAMA_TEST_MODEL!" --test_file "%~dp0!TEST_COMMAND_FILE!"
+python "%~dp0!AGENT_SCRIPT!" --llm_provider ollama --ollama_model "!OLLAMA_TEST_MODEL!" --test_file "%~dp0!TEST_COMMAND_FILE!"
 SET "AGENT_ERRORLEVEL=!ERRORLEVEL!"
 
 IF !AGENT_ERRORLEVEL! NEQ 0 (
-    ECHO [!SCRIPT_NAME!] WARNING: %AGENT_NAME% script exited with error code !AGENT_ERRORLEVEL!.
+    ECHO [!SCRIPT_NAME!] WARNING: !AGENT_NAME! script exited with error code !AGENT_ERRORLEVEL!.
     SET "SCRIPT_EXIT_CODE=!AGENT_ERRORLEVEL!"
 ) ELSE (
-    ECHO [!SCRIPT_NAME!] %AGENT_NAME% script completed successfully.
+    ECHO [!SCRIPT_NAME!] !AGENT_NAME! script completed successfully.
 )
 
 GOTO :HandleExit
 
 REM === Subroutines ===
 :ActivateVenv
-    ECHO [!SCRIPT_NAME!] Activating Python virtual environment from '!VENV_DIR!'...
+    ECHO [!SCRIPT_NAME!] Activating Python virtual environment from "%~dp0!VENV_DIR!"...
     IF NOT EXIST "%~dp0!VENV_DIR!\Scripts\activate.bat" (
-        ECHO [!SCRIPT_NAME!] ERROR: Virtual environment activation script not found at '%~dp0!VENV_DIR!\Scripts\activate.bat'.
+        ECHO [!SCRIPT_NAME!] ERROR: Virtual environment activation script not found at "%~dp0!VENV_DIR!\Scripts\activate.bat".
         ECHO [!SCRIPT_NAME!] Please run 'setup_venv.bat' first.
         EXIT /B 1
     )

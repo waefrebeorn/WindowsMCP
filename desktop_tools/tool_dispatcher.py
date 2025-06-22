@@ -360,34 +360,41 @@ class DesktopToolDispatcher:
                     raise ValueError("'path' and 'content' are required for append_text_to_file.")
                 output_data = await asyncio.to_thread(file_system.append_text_to_file, path, content)
 
-            elif tool_name == "create_directory":
+            elif tool_name == "create_folder": # Matches updated definition and function name
                 path = tool_args.get("path")
                 if not path:
-                    raise ValueError("'path' is required for create_directory.")
-                output_data = await asyncio.to_thread(file_system.create_directory, path)
+                    raise ValueError("'path' is required for create_folder.")
+                output_data = await asyncio.to_thread(file_system.create_folder, path)
 
-            elif tool_name == "delete_file_or_directory":
+            elif tool_name == "delete_item": # Matches updated definition and function name
                 path = tool_args.get("path")
+                force_delete = tool_args.get("force_delete_non_empty_folder", False)
                 if not path:
-                    raise ValueError("'path' is required for delete_file_or_directory.")
-                # Potentially add a confirmation step here if LLM could be asked
-                # For now, directly execute. User of this tool must be cautious.
-                logger.warning(f"Executing delete_file_or_directory for path: {path}. This is a destructive operation.")
-                output_data = await asyncio.to_thread(file_system.delete_file_or_directory, path)
+                    raise ValueError("'path' is required for delete_item.")
+                logger.warning(f"Executing delete_item for path: {path} with force: {force_delete}. This is a destructive operation.")
+                output_data = await asyncio.to_thread(file_system.delete_item, path, force_delete)
 
-            elif tool_name == "move_file_or_directory":
+            elif tool_name == "move_or_rename_item": # Matches updated definition and function name
+                source_path = tool_args.get("source_path")
+                new_path_or_name = tool_args.get("new_path_or_name")
+                if not source_path or not new_path_or_name:
+                    raise ValueError("'source_path' and 'new_path_or_name' are required for move_or_rename_item.")
+                output_data = await asyncio.to_thread(file_system.move_or_rename_item, source_path, new_path_or_name)
+
+            elif tool_name == "copy_item": # Matches updated definition (assuming copy_file_or_directory is still the backend fn)
                 source_path = tool_args.get("source_path")
                 destination_path = tool_args.get("destination_path")
                 if not source_path or not destination_path:
-                    raise ValueError("'source_path' and 'destination_path' are required for move_file_or_directory.")
-                output_data = await asyncio.to_thread(file_system.move_file_or_directory, source_path, destination_path)
+                    raise ValueError("'source_path' and 'destination_path' are required for copy_item.")
+                output_data = await asyncio.to_thread(file_system.copy_file_or_directory, source_path, destination_path)
 
-            elif tool_name == "copy_file_or_directory":
+            elif tool_name == "copy_file_or_directory": # Keep old name if schema wasn't updated, but ideally it was.
                 source_path = tool_args.get("source_path")
                 destination_path = tool_args.get("destination_path")
                 if not source_path or not destination_path:
                     raise ValueError("'source_path' and 'destination_path' are required for copy_file_or_directory.")
                 output_data = await asyncio.to_thread(file_system.copy_file_or_directory, source_path, destination_path)
+
 
             elif tool_name == "get_file_properties":
                 path = tool_args.get("path")
@@ -433,7 +440,68 @@ class DesktopToolDispatcher:
 
             # --- End of Application Management Tool Dispatching ---
 
+            # --- Window Management - New control_active_window ---
+            elif tool_name == "control_active_window":
+                action = tool_args.get("action")
+                if not action:
+                    raise ValueError("'action' is required for control_active_window.")
+
+                if action == "minimize":
+                    success = await asyncio.to_thread(window_manager.minimize_active_window)
+                    output_data = {"message": "Active window minimize attempt.", "success": success}
+                elif action == "maximize":
+                    success = await asyncio.to_thread(window_manager.maximize_active_window)
+                    output_data = {"message": "Active window maximize attempt.", "success": success}
+                elif action == "restore":
+                    success = await asyncio.to_thread(window_manager.restore_active_window)
+                    output_data = {"message": "Active window restore attempt.", "success": success}
+                elif action == "close":
+                    success = await asyncio.to_thread(window_manager.close_active_window)
+                    output_data = {"message": "Active window close attempt.", "success": success}
+                elif action == "get_title":
+                    title = await asyncio.to_thread(window_manager.get_active_window_title)
+                    if title is not None:
+                        output_data = {"active_window_title": title}
+                    else:
+                        output_data = {"error_type": "WindowError", "details": "Could not get active window title."}
+                        status_code = "error"
+                elif action == "get_geometry": # This action requires a title, but control_active_window implies current.
+                                            # For now, this specific sub-action might be hard to use without a title.
+                                            # The separate get_window_geometry(title) is better.
+                                            # Or, we get geometry of the *active* window. Let's assume that.
+                    active_title = await asyncio.to_thread(window_manager.get_active_window_title)
+                    if active_title is not None: # Can be empty string
+                        geometry = await asyncio.to_thread(window_manager.get_window_geometry, active_title)
+                        if geometry:
+                            output_data = geometry
+                        else:
+                            output_data = {"error_type": "WindowError", "details": f"Could not get geometry for active window '{active_title}' (perhaps no title or not found)."}
+                            status_code = "error"
+                    else:
+                        output_data = {"error_type": "WindowError", "details": "No active window or active window has no title to get geometry."}
+                        status_code = "error"
+                else:
+                    raise ValueError(f"Unsupported action '{action}' for control_active_window.")
+
             # --- System Information & Control Tool Dispatching ---
+            elif tool_name == "get_system_information":
+                query = tool_args.get("query")
+                path_arg = tool_args.get("path") # Optional
+                if not query:
+                    raise ValueError("'query' is required for get_system_information.")
+
+                from . import system_monitor # Local import
+                if query == "cpu_usage":
+                    output_data = await asyncio.to_thread(system_monitor.get_cpu_usage)
+                elif query == "memory_usage":
+                    output_data = await asyncio.to_thread(system_monitor.get_memory_usage)
+                elif query == "disk_usage":
+                    output_data = await asyncio.to_thread(system_monitor.get_disk_usage, path_arg if path_arg else "/")
+                elif query == "battery_status":
+                    output_data = await asyncio.to_thread(system_monitor.get_battery_status)
+                else:
+                    raise ValueError(f"Unsupported query '{query}' for get_system_information.")
+
             elif tool_name == "get_clipboard_text":
                 from . import system_control # Local import
                 output_data = await asyncio.to_thread(system_control.get_clipboard_text)
@@ -484,12 +552,17 @@ class DesktopToolDispatcher:
             # --- End of System Information & Control Tool Dispatching ---
 
             # --- Basic Web Interaction Tool Dispatching ---
-            elif tool_name == "open_url_in_default_browser":
-                url_to_open = tool_args.get("url")
-                if not url_to_open:
-                    raise ValueError("'url' argument is required.")
+            elif tool_name == "open_url_or_search_web": # Updated tool name
+                query_or_url = tool_args.get("query_or_url")
+                is_search = tool_args.get("is_search", False) # Default to False if not provided
+                if not query_or_url:
+                    raise ValueError("'query_or_url' argument is required.")
+
                 from . import web_interaction # Local import
-                output_data = await asyncio.to_thread(web_interaction.open_url_in_default_browser, url_to_open)
+                if is_search:
+                    output_data = await asyncio.to_thread(web_interaction.search_web, query_or_url)
+                else:
+                    output_data = await asyncio.to_thread(web_interaction.open_url_in_default_browser, query_or_url)
 
             # --- End of Basic Web Interaction Tool Dispatching ---
 

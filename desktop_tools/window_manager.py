@@ -259,3 +259,69 @@ if __name__ == "__main__":
     #     print(f"Failed to focus '{test_window_title_exact}'.")
 
     logger.info("Window manager example finished.")
+
+
+def _get_active_pygetwindow() -> Optional[gw.Window]:
+    """Helper to get the active pygetwindow.Window object."""
+    try:
+        active_win = gw.getActiveWindow()
+        if active_win:
+            return active_win
+        logger.warning("No active window found by pygetwindow.")
+        return None
+    except Exception as e:
+        logger.error(f"Error getting active window object: {e}", exc_info=True)
+        return None
+
+def minimize_active_window() -> bool:
+    """Minimizes the currently active window."""
+    active_window = _get_active_pygetwindow()
+    if active_window:
+        try:
+            active_window.minimize()
+            logger.info(f"Minimized window: '{active_window.title}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error minimizing window '{active_window.title}': {e}", exc_info=True)
+            return False
+    return False
+
+def maximize_active_window() -> bool:
+    """Maximizes the currently active window."""
+    active_window = _get_active_pygetwindow()
+    if active_window:
+        try:
+            active_window.maximize()
+            logger.info(f"Maximized window: '{active_window.title}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error maximizing window '{active_window.title}': {e}", exc_info=True)
+            return False
+    return False
+
+def restore_active_window() -> bool:
+    """Restores the currently active window (if minimized or maximized)."""
+    active_window = _get_active_pygetwindow()
+    if active_window:
+        try:
+            active_window.restore()
+            logger.info(f"Restored window: '{active_window.title}'")
+            return True
+        except Exception as e:
+            logger.error(f"Error restoring window '{active_window.title}': {e}", exc_info=True)
+            return False
+    return False
+
+def close_active_window() -> bool:
+    """Closes the currently active window."""
+    active_window = _get_active_pygetwindow()
+    if active_window:
+        try:
+            active_window.close()
+            logger.info(f"Closed window: '{active_window.title}'")
+            return True
+        except Exception as e:
+            # This can happen if the window doesn't respond or close() isn't supported well by backend for that specific window
+            logger.error(f"Error closing window '{active_window.title}': {e}", exc_info=True)
+            return False
+    return False

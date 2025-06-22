@@ -230,7 +230,7 @@ def write_text_file(path_str: str, content: str, overwrite: bool = False) -> Dic
 
 def append_text_to_file(path_str: str, content: str) -> Dict[str, str]:
     """
-    Appends text content to an existing file. Creates the file if it doesn't exist.
+    Appends text content to an existing file. Creates the file (including parent directories) if it doesn't exist.
 
     Args:
         path_str: The path to the file.
@@ -257,12 +257,12 @@ def append_text_to_file(path_str: str, content: str) -> Dict[str, str]:
         logger.error(f"Error appending to file '{path_str}': {e}", exc_info=True)
         return {"error": f"An unexpected error occurred while appending to file: {e}"}
 
-def create_directory(path_str: str) -> Dict[str, str]:
+def create_folder(path_str: str) -> Dict[str, str]: # Renamed from create_directory
     """
-    Creates a new directory.
+    Creates a new folder.
 
     Args:
-        path_str: The path for the new directory.
+        path_str: The path for the new folder.
 
     Returns:
         A dictionary with "path" and "message" on success, or "error".
@@ -271,27 +271,28 @@ def create_directory(path_str: str) -> Dict[str, str]:
         path = Path(path_str).resolve()
         if path.exists():
             if path.is_dir():
-                return {"path": str(path), "message": f"Directory '{path}' already exists."}
+                return {"path": str(path), "message": f"Folder '{path}' already exists."} # Updated term
             else:
                 return {"error": f"Path '{path}' already exists and is a file."}
 
-        path.mkdir(parents=True, exist_ok=True) # exist_ok=True means it won't error if dir exists
-                                                # but we checked above so it's more for parents
-        logger.info(f"Successfully created directory '{path}'.")
-        return {"path": str(path), "message": f"Directory '{path}' created."}
+        path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Successfully created folder '{path}'.") # Updated term
+        return {"path": str(path), "message": f"Folder '{path}' created."} # Updated term
     except PermissionError:
-        logger.error(f"Permission denied for creating directory: {path_str}")
-        return {"error": f"Permission denied for creating directory: {path_str}"}
+        logger.error(f"Permission denied for creating folder: {path_str}") # Updated term
+        return {"error": f"Permission denied for creating folder: {path_str}"} # Updated term
     except Exception as e:
-        logger.error(f"Error creating directory '{path_str}': {e}", exc_info=True)
-        return {"error": f"An unexpected error occurred while creating directory: {e}"}
+        logger.error(f"Error creating folder '{path_str}': {e}", exc_info=True) # Updated term
+        return {"error": f"An unexpected error occurred while creating folder: {e}"} # Updated term
 
-def delete_file_or_directory(path_str: str) -> Dict[str, str]:
+def delete_item(path_str: str, force_delete_non_empty_folder: bool = False) -> Dict[str, str]: # Renamed and added force flag
     """
-    Deletes a file or a directory (recursively if it's a directory).
+    Deletes a specified file or folder.
+    WARNING: This operation is destructive. Deleting non-empty folders requires force_delete_non_empty_folder=True.
 
     Args:
-        path_str: The path to the file or directory to delete.
+        path_str: The path to the file or folder to delete.
+        force_delete_non_empty_folder: If True, allows deletion of non-empty folders. Defaults to False.
 
     Returns:
         A dictionary with "path" and "message" on success, or "error".
@@ -307,11 +308,19 @@ def delete_file_or_directory(path_str: str) -> Dict[str, str]:
             return {"path": str(path), "message": f"File '{path}' deleted."}
         elif path.is_dir():
             import shutil
-            shutil.rmtree(path) # Deletes directory and all its contents
-            logger.info(f"Successfully deleted directory '{path}' and its contents.")
-            return {"path": str(path), "message": f"Directory '{path}' and its contents deleted."}
+            if force_delete_non_empty_folder:
+                shutil.rmtree(str(path)) # Deletes directory and all its contents
+                logger.warning(f"FORCE DELETED non-empty folder and its contents: {path}")
+                return {"path": str(path), "message": f"Folder '{path}' and its contents forcefully deleted."}
+            else:
+                try:
+                    path.rmdir() # Only deletes empty directories
+                    logger.info(f"Successfully deleted empty folder: {path}")
+                    return {"path": str(path), "message": f"Empty folder '{path}' deleted."}
+                except OSError: # Directory not empty
+                    logger.warning(f"Attempted to delete non-empty folder '{path}' without force flag.")
+                    return {"error": f"Folder '{path}' is not empty. Use force_delete_non_empty_folder=true to delete (EXTREME CAUTION)."}
         else:
-            # This case should be rare (e.g. broken symlink, other special file types)
             return {"error": f"Path '{path}' is neither a file nor a directory. Deletion aborted."}
 
     except PermissionError:
@@ -321,53 +330,53 @@ def delete_file_or_directory(path_str: str) -> Dict[str, str]:
         logger.error(f"Error deleting '{path_str}': {e}", exc_info=True)
         return {"error": f"An unexpected error occurred while deleting: {e}"}
 
-def move_file_or_directory(source_path_str: str, destination_path_str: str) -> Dict[str, str]:
+def move_or_rename_item(source_path_str: str, new_path_or_name_str: str) -> Dict[str, str]: # Renamed and params adjusted
     """
-    Moves a file or directory from a source path to a destination path.
+    Moves or renames a file or folder.
 
     Args:
-        source_path_str: The path of the file or directory to move.
-        destination_path_str: The path to move the item to. If it's a directory,
-                              the source item will be moved into it. If it's a full path
-                              (including new name), it will be moved/renamed.
-
+        source_path_str: The path of the file or folder to move/rename.
+        new_path_or_name_str: The new full path or new name for the item.
+                              If just a name, item is renamed in its current directory.
+                              If a path, item is moved (and potentially renamed).
     Returns:
-        A dictionary with "source_path", "destination_path", and "message" on success, or "error".
+        A dictionary with "source_path", "final_destination_path", and "message" on success, or "error".
     """
     try:
         source_path = Path(source_path_str).resolve()
-        destination_path = Path(destination_path_str).resolve()
+        new_path_or_name = Path(new_path_or_name_str) # Don't resolve yet
 
         if not source_path.exists():
             return {"error": f"Source path '{source_path}' does not exist."}
 
+        # Determine the final destination path
+        if new_path_or_name.is_absolute():
+            final_destination_path = new_path_or_name.resolve()
+        elif "/" in new_path_or_name_str or "\\" in new_path_or_name_str: # It's a relative path
+            final_destination_path = (source_path.parent / new_path_or_name).resolve()
+        else: # It's just a name, so rename in the same directory
+            final_destination_path = (source_path.parent / new_path_or_name).resolve()
+
         # Ensure destination parent directory exists
-        destination_path.parent.mkdir(parents=True, exist_ok=True)
+        final_destination_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # If destination is an existing directory, move source into it
-        if destination_path.is_dir():
-            final_destination = destination_path / source_path.name
-        else: # Destination is a full path (potentially renaming)
-            final_destination = destination_path
-
-        if final_destination.exists():
-             return {"error": f"Destination path '{final_destination}' already exists."}
-
+        if final_destination_path.exists():
+             return {"error": f"Destination path '{final_destination_path}' already exists."}
 
         import shutil
-        shutil.move(str(source_path), str(final_destination))
-        logger.info(f"Successfully moved '{source_path}' to '{final_destination}'.")
+        shutil.move(str(source_path), str(final_destination_path))
+        logger.info(f"Successfully moved/renamed '{source_path}' to '{final_destination_path}'.")
         return {
             "source_path": str(source_path),
-            "destination_path": str(final_destination),
-            "message": f"Moved '{source_path}' to '{final_destination}'.",
+            "final_destination_path": str(final_destination_path),
+            "message": f"Moved/renamed '{source_path}' to '{final_destination_path}'.",
         }
     except PermissionError:
-        logger.error(f"Permission denied for moving '{source_path_str}' to '{destination_path_str}'")
-        return {"error": f"Permission denied for moving operation."}
+        logger.error(f"Permission denied for moving/renaming '{source_path_str}' to '{new_path_or_name_str}'")
+        return {"error": f"Permission denied for move/rename operation."}
     except Exception as e:
-        logger.error(f"Error moving '{source_path_str}' to '{destination_path_str}': {e}", exc_info=True)
-        return {"error": f"An unexpected error occurred while moving: {e}"}
+        logger.error(f"Error moving/renaming '{source_path_str}' to '{new_path_or_name_str}': {e}", exc_info=True)
+        return {"error": f"An unexpected error occurred while moving/renaming: {e}"}
 
 def copy_file_or_directory(source_path_str: str, destination_path_str: str) -> Dict[str, str]:
     """
