@@ -493,6 +493,61 @@ class DesktopToolDispatcher:
 
             # --- End of Basic Web Interaction Tool Dispatching ---
 
+
+            # --- Code Editor Tool Dispatching (Phase 2) ---
+            elif tool_name == "show_code_in_editor":
+                code_content = tool_args.get("code_content")
+                language = tool_args.get("language", "python") # Default to python
+                window_title = tool_args.get("window_title") # Can be None
+
+                if code_content is None: # Must have content
+                    raise ValueError("'code_content' is required for show_code_in_editor.")
+
+                from . import code_editor # Local import
+                # This function is designed to run Tkinter in a separate thread and return quickly.
+                # So, direct await asyncio.to_thread might not be strictly necessary if the function
+                # itself manages the threading correctly for non-blocking behavior.
+                # However, to be consistent with other tools that might do heavy work,
+                # using to_thread is a safe pattern.
+                output_data = await asyncio.to_thread(
+                    code_editor.display_code_in_popup,
+                    code_content,
+                    language=language,
+                    window_title=window_title if window_title else f"{language.capitalize()} Code Viewer"
+                )
+            # --- End of Code Editor Tool Dispatching ---
+
+            elif tool_name == "get_contextual_code_info":
+                code_text = tool_args.get("code_text")
+                line_number = tool_args.get("line_number")
+                column_number = tool_args.get("column_number") # Optional
+                language = tool_args.get("language", "python") # Default to python
+
+                if not code_text or line_number is None:
+                    raise ValueError("'code_text' and 'line_number' are required.")
+                try:
+                    line_number_int = int(line_number)
+                except ValueError:
+                    raise ValueError("'line_number' must be an integer.")
+
+                column_number_int = None
+                if column_number is not None:
+                    try:
+                        column_number_int = int(column_number)
+                    except ValueError:
+                        raise ValueError("'column_number' must be an integer if provided.")
+
+                if language != "python":
+                    output_data = {"status": "error", "message": f"Language '{language}' is not supported for contextual code info. Only 'python' is currently supported."}
+                else:
+                    from . import code_parser # Local import
+                    output_data = await asyncio.to_thread(
+                        code_parser.find_contextual_structure,
+                        code_text,
+                        line_number_int,
+                        column_number_int
+                    )
+
             else:
                 output_data = {
                     "error_type": "ToolNotFound",

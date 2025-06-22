@@ -534,6 +534,36 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 required=["url"],
             ),
         ),
+
+        # --- Code Editor Tool (Phase 2) ---
+        types.FunctionDeclaration(
+            name="show_code_in_editor",
+            description="Displays given code content in a simple pop-up, read-only code viewer window. Useful for showing code snippets to the user.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "code_content": types.Schema(type=types.Type.STRING, description="The string of code or text to display in the editor window."),
+                    "language": types.Schema(type=types.Type.STRING, nullable=True, description="Optional. The programming language of the code (e.g., 'python', 'javascript', 'text'). Currently used for window title, future for syntax highlighting."),
+                    "window_title": types.Schema(type=types.Type.STRING, nullable=True, description="Optional. A specific title for the code viewer window."),
+                },
+                required=["code_content"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_contextual_code_info",
+            description="Parses provided Python code and identifies the function or class definition that encloses a given line number. Returns information about this specific code structure.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "code_text": types.Schema(type=types.Type.STRING, description="The Python code content as a string."),
+                    "line_number": types.Schema(type=types.Type.INTEGER, description="The 1-based line number within the code to find context for."),
+                    "column_number": types.Schema(type=types.Type.INTEGER, nullable=True, description="Optional. The 0-based column number for more precise context (currently not heavily used by the backend but can be provided)."),
+                    "language": types.Schema(type=types.Type.STRING, nullable=True, default="python", description="The programming language of the code. Currently only 'python' is supported."),
+                },
+                required=["code_text", "line_number"],
+            ),
+        ),
+
     ]
 )
 
