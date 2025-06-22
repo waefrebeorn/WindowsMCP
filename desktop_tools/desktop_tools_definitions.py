@@ -347,6 +347,193 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 required=["path"],
             ),
         ),
+        types.FunctionDeclaration(
+            name="write_text_file",
+            description="Writes text content to a specified file. Can optionally overwrite if the file already exists.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The full path to the file to be written."),
+                    "content": types.Schema(type=types.Type.STRING, description="The text content to write into the file."),
+                    "overwrite": types.Schema(type=types.Type.BOOLEAN, nullable=True, description="If True, overwrite the file if it exists. Defaults to False."),
+                },
+                required=["path", "content"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="append_text_to_file",
+            description="Appends text content to an existing file. Creates the file if it does not exist.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The full path to the file to append to."),
+                    "content": types.Schema(type=types.Type.STRING, description="The text content to append to the file."),
+                },
+                required=["path", "content"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="create_directory",
+            description="Creates a new directory at the specified path. Parent directories will be created if they don't exist.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The full path where the new directory should be created."),
+                },
+                required=["path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="delete_file_or_directory",
+            description="Deletes a specified file or an entire directory (recursively). Use with caution.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The full path of the file or directory to delete."),
+                },
+                required=["path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="move_file_or_directory",
+            description="Moves a file or directory from a source path to a destination path.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or directory."),
+                    "destination_path": types.Schema(type=types.Type.STRING, description="The full path for the destination. If it's a directory, the source will be moved into it."),
+                },
+                required=["source_path", "destination_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="copy_file_or_directory",
+            description="Copies a file or directory from a source path to a destination path. Overwrites destination file if it exists.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "source_path": types.Schema(type=types.Type.STRING, description="The full path of the source file or directory."),
+                    "destination_path": types.Schema(type=types.Type.STRING, description="The full path for the destination. If it's a directory, the source will be copied into it."),
+                },
+                required=["source_path", "destination_path"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_file_properties",
+            description="Retrieves properties of a specified file or directory, such as size, type, and modification times.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "path": types.Schema(type=types.Type.STRING, description="The full path to the file or directory."),
+                },
+                required=["path"],
+            ),
+        ),
+        # --- Application Management Tools ---
+        types.FunctionDeclaration(
+            name="start_application",
+            description="Starts or launches an application given its name or full path. Optional arguments can be provided.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "application_path_or_name": types.Schema(type=types.Type.STRING, description="The name of the application (e.g., 'notepad.exe', 'firefox') or its full path."),
+                    "arguments": types.Schema(type=types.Type.ARRAY, items=types.Schema(type=types.Type.STRING), nullable=True, description="Optional list of command-line arguments to pass to the application."),
+                },
+                required=["application_path_or_name"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_running_processes",
+            description="Lists currently running processes, providing details like PID, name, username, status, CPU and memory usage.",
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}), # No parameters needed
+        ),
+        types.FunctionDeclaration(
+            name="close_application_by_pid",
+            description="Closes or terminates an application using its Process ID (PID). Can attempt a graceful termination or a forceful kill.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "pid": types.Schema(type=types.Type.INTEGER, description="The Process ID (PID) of the application to close."),
+                    "force": types.Schema(type=types.Type.BOOLEAN, nullable=True, description="If True, forcefully kill the process. If False (default), attempt graceful termination first."),
+                },
+                required=["pid"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="close_application_by_title",
+            description="Closes or terminates an application by matching a substring in its main window title. This may affect multiple processes if titles are similar. Uses case-insensitive matching.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "window_title_substring": types.Schema(type=types.Type.STRING, description="A substring of the window title to search for and close."),
+                    "force": types.Schema(type=types.Type.BOOLEAN, nullable=True, description="If True, forcefully kill the process(es). If False (default), attempt graceful termination first."),
+                },
+                required=["window_title_substring"],
+            ),
+        ),
+        # --- System Information & Control Tools ---
+        types.FunctionDeclaration(
+            name="get_clipboard_text",
+            description="Retrieves the current text content from the system clipboard.",
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+        ),
+        types.FunctionDeclaration(
+            name="set_clipboard_text",
+            description="Sets the system clipboard to the provided text content.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "text": types.Schema(type=types.Type.STRING, description="The text to place onto the clipboard."),
+                },
+                required=["text"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="get_system_volume",
+            description="Gets the current master system volume level (0-100). Currently Windows-only.",
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+        ),
+        types.FunctionDeclaration(
+            name="set_system_volume",
+            description="Sets the master system volume level (0-100). Currently Windows-only.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "level": types.Schema(type=types.Type.INTEGER, description="The desired volume level (0-100)."),
+                },
+                required=["level"],
+            ),
+        ),
+        types.FunctionDeclaration(
+            name="lock_windows_session",
+            description="Locks the current Windows user session. This tool is specific to Windows.",
+            parameters=types.Schema(type=types.Type.OBJECT, properties={}),
+        ),
+        types.FunctionDeclaration(
+            name="shutdown_windows_system",
+            description="Initiates system shutdown, restart, or logoff. Primarily for Windows, with basic support for Linux/macOS via 'shutdown' command.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "mode": types.Schema(type=types.Type.STRING, enum=["shutdown", "restart", "logoff"], description="The desired power mode: 'shutdown', 'restart', or 'logoff'. Defaults to 'shutdown' if not specified by LLM but it should always specify one.", default="shutdown"),
+                    "force": types.Schema(type=types.Type.BOOLEAN, nullable=True, description="If True, forcefully performs the operation (e.g., closes applications without saving). Defaults to False."),
+                    "delay_seconds": types.Schema(type=types.Type.INTEGER, nullable=True, description="Delay in seconds before the operation. Defaults to 0."),
+                },
+                required=["mode"], # Mode is essential
+            ),
+        ),
+        # --- Basic Web Interaction Tool ---
+        types.FunctionDeclaration(
+            name="open_url_in_default_browser",
+            description="Opens a given URL in the system's default web browser.",
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "url": types.Schema(type=types.Type.STRING, description="The full URL to open (e.g., 'https://www.google.com'). Must include http:// or https:// scheme."),
+                },
+                required=["url"],
+            ),
+        ),
     ]
 )
 
