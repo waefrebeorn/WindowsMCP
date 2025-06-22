@@ -19,3 +19,9 @@ PyWinCtl
 psutil
 pyperclip
 pycaw
+Flask
+PyYAML
+TTS
+soundfile
+numpy
+torchaudio

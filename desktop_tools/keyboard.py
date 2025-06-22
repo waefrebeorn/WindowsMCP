@@ -1,17 +1,12 @@
 import pyautogui
+import time # Added for the __main__ block example
+import platform # Added for the __main__ block example
 
-try:
-    from config_manager import config
-except ImportError:
-    print(
-        "Warning: config_manager not found. Using PyAutoGUI default settings for keyboard.py."
-    )
-    config = {}
-
-# Apply global PyAutoGUI settings from config
-# FAILSAFE is more mouse-related but PAUSE applies to keyboard actions too if set globally.
-pyautogui.FAILSAFE = config.get("PYAUTOGUI_FAILSAFE_ENABLED", True)
-pyautogui.PAUSE = config.get("PYAUTOGUI_PAUSE_PER_ACTION", 0.1)
+# PyAutoGUI global settings (FAILSAFE, PAUSE) will use their library defaults.
+# If they need to be configurable, DesktopToolDispatcher or WuBuEngine can set them once at startup
+# using values from wubu_config.yaml. For now, relying on PyAutoGUI's defaults.
+# pyautogui.FAILSAFE = True (default)
+# pyautogui.PAUSE = 0.1 (default)
 
 
 def keyboard_type(text: str, interval: float = 0.01) -> None:
