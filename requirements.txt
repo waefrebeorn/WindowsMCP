@@ -16,3 +16,6 @@ scipy
 pyttsx3
 PyGetWindow
 PyWinCtl
+psutil
+pyperclip
+pycaw

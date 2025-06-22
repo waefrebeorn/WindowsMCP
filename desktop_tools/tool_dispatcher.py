@@ -344,6 +344,155 @@ class DesktopToolDispatcher:
                 else:
                     output_data = read_result
 
+            # --- New File System Tool Dispatching ---
+            elif tool_name == "write_text_file":
+                path = tool_args.get("path")
+                content = tool_args.get("content")
+                overwrite = tool_args.get("overwrite", False) # Default to False if not provided
+                if not path or content is None: # content can be empty string, so check for None
+                    raise ValueError("'path' and 'content' are required for write_text_file.")
+                output_data = await asyncio.to_thread(file_system.write_text_file, path, content, overwrite)
+
+            elif tool_name == "append_text_to_file":
+                path = tool_args.get("path")
+                content = tool_args.get("content")
+                if not path or content is None:
+                    raise ValueError("'path' and 'content' are required for append_text_to_file.")
+                output_data = await asyncio.to_thread(file_system.append_text_to_file, path, content)
+
+            elif tool_name == "create_directory":
+                path = tool_args.get("path")
+                if not path:
+                    raise ValueError("'path' is required for create_directory.")
+                output_data = await asyncio.to_thread(file_system.create_directory, path)
+
+            elif tool_name == "delete_file_or_directory":
+                path = tool_args.get("path")
+                if not path:
+                    raise ValueError("'path' is required for delete_file_or_directory.")
+                # Potentially add a confirmation step here if LLM could be asked
+                # For now, directly execute. User of this tool must be cautious.
+                logger.warning(f"Executing delete_file_or_directory for path: {path}. This is a destructive operation.")
+                output_data = await asyncio.to_thread(file_system.delete_file_or_directory, path)
+
+            elif tool_name == "move_file_or_directory":
+                source_path = tool_args.get("source_path")
+                destination_path = tool_args.get("destination_path")
+                if not source_path or not destination_path:
+                    raise ValueError("'source_path' and 'destination_path' are required for move_file_or_directory.")
+                output_data = await asyncio.to_thread(file_system.move_file_or_directory, source_path, destination_path)
+
+            elif tool_name == "copy_file_or_directory":
+                source_path = tool_args.get("source_path")
+                destination_path = tool_args.get("destination_path")
+                if not source_path or not destination_path:
+                    raise ValueError("'source_path' and 'destination_path' are required for copy_file_or_directory.")
+                output_data = await asyncio.to_thread(file_system.copy_file_or_directory, source_path, destination_path)
+
+            elif tool_name == "get_file_properties":
+                path = tool_args.get("path")
+                if not path:
+                    raise ValueError("'path' is required for get_file_properties.")
+                output_data = await asyncio.to_thread(file_system.get_file_properties, path)
+
+            # --- End of New File System Tool Dispatching ---
+
+            # --- Application Management Tool Dispatching ---
+            elif tool_name == "start_application":
+                app_path_or_name = tool_args.get("application_path_or_name")
+                app_args = tool_args.get("arguments") # This can be None
+                if not app_path_or_name:
+                    raise ValueError("'application_path_or_name' is required.")
+                # Import app_manager locally to avoid circular dependencies if it grows
+                from . import app_manager
+                output_data = await asyncio.to_thread(app_manager.start_application, app_path_or_name, app_args)
+
+            elif tool_name == "get_running_processes":
+                from . import app_manager
+                output_data = await asyncio.to_thread(app_manager.get_running_processes)
+
+            elif tool_name == "close_application_by_pid":
+                pid = tool_args.get("pid")
+                force = tool_args.get("force", False)
+                if pid is None: # PID 0 can be valid in some contexts, but usually not for user apps
+                    raise ValueError("'pid' must be a valid integer.")
+                try:
+                    pid_int = int(pid)
+                except ValueError:
+                    raise ValueError("'pid' must be an integer.")
+                from . import app_manager
+                output_data = await asyncio.to_thread(app_manager.close_application_by_pid, pid_int, force)
+
+            elif tool_name == "close_application_by_title":
+                title_substring = tool_args.get("window_title_substring")
+                force = tool_args.get("force", False)
+                if not title_substring:
+                    raise ValueError("'window_title_substring' is required.")
+                from . import app_manager
+                output_data = await asyncio.to_thread(app_manager.close_application_by_title, title_substring, force)
+
+            # --- End of Application Management Tool Dispatching ---
+
+            # --- System Information & Control Tool Dispatching ---
+            elif tool_name == "get_clipboard_text":
+                from . import system_control # Local import
+                output_data = await asyncio.to_thread(system_control.get_clipboard_text)
+
+            elif tool_name == "set_clipboard_text":
+                text_to_set = tool_args.get("text")
+                if text_to_set is None: # Allow empty string, but not None
+                    raise ValueError("'text' argument is required for set_clipboard_text.")
+                from . import system_control
+                output_data = await asyncio.to_thread(system_control.set_clipboard_text, text_to_set)
+
+            elif tool_name == "get_system_volume":
+                from . import system_control
+                output_data = await asyncio.to_thread(system_control.get_system_volume)
+
+            elif tool_name == "set_system_volume":
+                level = tool_args.get("level")
+                if level is None:
+                    raise ValueError("'level' argument (0-100) is required for set_system_volume.")
+                try:
+                    level_int = int(level)
+                except ValueError:
+                    raise ValueError("'level' must be an integer between 0 and 100.")
+                if not (0 <= level_int <= 100):
+                    raise ValueError("'level' must be between 0 and 100.")
+                from . import system_control
+                output_data = await asyncio.to_thread(system_control.set_system_volume, level_int)
+
+            elif tool_name == "lock_windows_session":
+                from . import system_control
+                output_data = await asyncio.to_thread(system_control.lock_windows_session)
+
+            elif tool_name == "shutdown_windows_system":
+                mode = tool_args.get("mode", "shutdown")
+                force = tool_args.get("force", False)
+                delay_seconds = tool_args.get("delay_seconds", 0)
+                if not isinstance(mode, str) or mode not in ["shutdown", "restart", "logoff"]:
+                    raise ValueError("Invalid 'mode'. Must be 'shutdown', 'restart', or 'logoff'.")
+                if not isinstance(force, bool):
+                    raise ValueError("'force' must be a boolean.")
+                if not isinstance(delay_seconds, int) or delay_seconds < 0:
+                    raise ValueError("'delay_seconds' must be a non-negative integer.")
+
+                from . import system_control
+                logger.warning(f"Executing shutdown_windows_system: mode={mode}, force={force}, delay={delay_seconds}s. This is a system-altering operation.")
+                output_data = await asyncio.to_thread(system_control.shutdown_windows_system, mode, force, delay_seconds)
+
+            # --- End of System Information & Control Tool Dispatching ---
+
+            # --- Basic Web Interaction Tool Dispatching ---
+            elif tool_name == "open_url_in_default_browser":
+                url_to_open = tool_args.get("url")
+                if not url_to_open:
+                    raise ValueError("'url' argument is required.")
+                from . import web_interaction # Local import
+                output_data = await asyncio.to_thread(web_interaction.open_url_in_default_browser, url_to_open)
+
+            # --- End of Basic Web Interaction Tool Dispatching ---
+
             else:
                 output_data = {
                     "error_type": "ToolNotFound",
