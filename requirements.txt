@@ -8,9 +8,14 @@ Pillow
 requests
 pytesseract
 pandas
+transformers
+torch
 openai-whisper
 sounddevice
 scipy
 pyttsx3
 PyGetWindow
 PyWinCtl
+psutil
+pyperclip
+pycaw
