@@ -17,6 +17,10 @@ IF !ERRORLEVEL! NEQ 0 (
     GOTO :HandleExit
 )
 
+CALL :CheckDocker
+REM If Docker is not found/working, script continues but Zonos TTS (Docker-based) will not work.
+REM User is guided by CheckDocker.
+
 REM === Main Logic ===
 CALL :CreateVenv
 IF !ERRORLEVEL! NEQ 0 (
@@ -54,6 +58,70 @@ REM === Subroutines ===
         EXIT /B 1
     )
     ECHO [!SCRIPT_NAME!] Python found.
+EXIT /B 0
+
+:CheckDocker
+    ECHO.
+    ECHO [!SCRIPT_NAME!] Checking for Docker (required for Zonos TTS)...
+    docker --version >NUL 2>NUL
+    IF !ERRORLEVEL! EQU 0 (
+        ECHO [!SCRIPT_NAME!] Docker found.
+        SET "DOCKER_INSTALLED=true"
+        CALL :PullZonosDockerImage
+    ) ELSE (
+        ECHO [!SCRIPT_NAME!] WARNING: Docker not found on system PATH or Docker Desktop not running.
+        SET "DOCKER_INSTALLED=false"
+        CALL :DockerInstallGuide
+        REM Optionally, re-check or just inform user to restart terminal/script
+        docker --version >NUL 2>NUL
+        IF !ERRORLEVEL! EQU 0 (
+            ECHO [!SCRIPT_NAME!] Docker now detected. Attempting to pull Zonos image...
+            SET "DOCKER_INSTALLED=true"
+            CALL :PullZonosDockerImage
+        ) ELSE (
+            ECHO [!SCRIPT_NAME!] Docker still not found. Zonos TTS will not function.
+            ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is installed, running, and 'docker' is in PATH.
+        )
+    )
+EXIT /B 0
+
+:DockerInstallGuide
+    ECHO.
+    ECHO ================================================================================
+    ECHO [!SCRIPT_NAME!] IMPORTANT: Docker Desktop Installation Guide (for Zonos TTS)
+    ECHO.
+    ECHO [!SCRIPT_NAME!] WuBu's Zonos Text-to-Speech engine runs inside a Docker container.
+    ECHO.
+    ECHO [!SCRIPT_NAME!] 1. Download Docker Desktop for Windows from the official website:
+    ECHO [!SCRIPT_NAME!]    https://www.docker.com/products/docker-desktop/
+    ECHO.
+    ECHO [!SCRIPT_NAME!] 2. Run the installer and follow the instructions. This might require a system restart.
+    ECHO.
+    ECHO [!SCRIPT_NAME!] 3. After installation, ensure Docker Desktop is RUNNING.
+    ECHO [!SCRIPT_NAME!]    (Look for the Docker whale icon in your system tray).
+    ECHO.
+    ECHO [!SCRIPT_NAME!] 4. IMPORTANT: You may need to restart your Command Prompt or PowerShell
+    ECHO [!SCRIPT_NAME!]    (and this script) for the 'docker' command to be recognized.
+    ECHO [!SCRIPT_NAME!]    Test by opening a NEW terminal and typing: docker --version
+    ECHO ================================================================================
+    ECHO.
+    PAUSE "[!SCRIPT_NAME!] Press any key to continue after attempting Docker Desktop installation and ensuring it's running..."
+EXIT /B 0
+
+:PullZonosDockerImage
+    ECHO.
+    SET "DEFAULT_ZONOS_IMAGE=zyphra/zonos-v0.1-transformer:latest"
+    ECHO [!SCRIPT_NAME!] Attempting to pull default Zonos Docker image: !DEFAULT_ZONOS_IMAGE!
+    ECHO [!SCRIPT_NAME!] This image is required for Zonos TTS and may take some time to download.
+    docker pull "!DEFAULT_ZONOS_IMAGE!"
+    IF !ERRORLEVEL! EQU 0 (
+        ECHO [!SCRIPT_NAME!] Successfully pulled Zonos Docker image: !DEFAULT_ZONOS_IMAGE!.
+    ) ELSE (
+        ECHO [!SCRIPT_NAME!] ERROR: Failed to pull Zonos Docker image !DEFAULT_ZONOS_IMAGE!. (Error Code: !ERRORLEVEL!)
+        ECHO [!SCRIPT_NAME!] Please check your internet connection and ensure Docker is running correctly.
+        ECHO [!SCRIPT_NAME!] You might need to pull it manually later if this fails.
+        ECHO [!SCRIPT_NAME!] The Zonos TTS engine in WuBu will use the image name specified in its configuration.
+    )
 EXIT /B 0
 
 :CreateVenv
