@@ -89,34 +89,16 @@ REM --- Subroutine: DownloadModels ---
     ECHO.
 EXIT /B 0
 
-REM --- Guidance for Zonos TTS (eSpeak NG) ---
+REM --- Zonos TTS (eSpeak NG) guidance has been moved to setup_venv.bat ---
+REM Kept the label here in case of old references, but it does nothing now.
 :ZonosGuidance
-    ECHO.
-    ECHO ================================================================================
-    ECHO [!SCRIPT_NAME!] IMPORTANT: For advanced Text-to-Speech (TTS) using Zonos,
-    ECHO [!SCRIPT_NAME!] WuBu requires eSpeak NG.
-    ECHO.
-    ECHO [!SCRIPT_NAME!] Please download eSpeak NG for Windows from the official repository:
-    ECHO [!SCRIPT_NAME!]   https://github.com/espeak-ng/espeak-ng/releases
-    ECHO.
-    ECHO [!SCRIPT_NAME!] 1. Download the .zip file (e.g., espeak-ng-*.zip).
-    ECHO [!SCRIPT_NAME!] 2. Extract the contents to a permanent location on your system (e.g., C:\espeak-ng).
-    ECHO [!SCRIPT_NAME!] 3. Add the directory containing "espeak-ng.exe" to your system's PATH.
-    ECHO [!SCRIPT_NAME!]    (Search for "environment variables", click "Edit the system environment variables",
-    ECHO [!SCRIPT_NAME!]     then "Environment Variables...", select "Path" under "System variables",
-    ECHO [!SCRIPT_NAME!]     click "Edit...", then "New", and add the path to your espeak-ng directory).
-    ECHO.
-    ECHO [!SCRIPT_NAME!] WuBu's Zonos TTS will not function correctly if eSpeak NG is not installed and in PATH.
-    ECHO [!SCRIPT_NAME!] After adding to PATH, you might need to restart your Command Prompt or PC.
-    ECHO [!SCRIPT_NAME!] Test by opening a new Command Prompt and typing: espeak-ng --version
-    ECHO ================================================================================
-    ECHO.
-    EXIT /B 0
+    REM ECHO [!SCRIPT_NAME!] Zonos TTS guidance is now part of setup_venv.bat (Docker setup).
+EXIT /B 0
 
 
 REM === Final Exit Point ===
 :HandleExit
-    CALL :ZonosGuidance REM Call Zonos guidance before exiting
+    REM CALL :ZonosGuidance REM No longer calling this here. setup_venv.bat handles Docker/Zonos prereqs.
     ECHO.
 IF "!SCRIPT_EXIT_CODE!" NEQ "0" (
     ECHO [!SCRIPT_NAME!] Script finished with errors. Error Code: !SCRIPT_EXIT_CODE!
