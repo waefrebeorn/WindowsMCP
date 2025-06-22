@@ -5,6 +5,11 @@ from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 # Import specific engine implementations that will be managed
 from .glados_voice import WubuGLaDOSStyleVoice
 from .kokoro_voice import WubuKokoroVoice
+from .zonos_voice import ZonosVoice # Import ZonosVoice
+
+# Define a conceptual ID for the Zonos engine itself within the manager
+ZONOS_ENGINE_ID = "zonos_engine_cloning_service"
+
 
 # Could also import other future engines:
 # from .piper_tts_engine import PiperTTSEngine (if created)
@@ -94,68 +99,123 @@ class TTSEngineManager:
             except Exception as e:
                 print(f"Error loading WubuKokoroVoice engine: {e}")
 
+        # --- Load Zonos Voice Engine ---
+        # Config structure example:
+        # tts:
+        #   zonos_voice_engine: # Key matches a section name
+        #     enabled: true
+        #     language: 'en' # Default language for Zonos if not specified per call
+        #     zonos_model_name: "Zyphra/Zonos-v0.1-transformer" # or hybrid
+        #     device: "cuda" # "cpu" or "cuda"
+        #     default_reference_audio_path: "path/to/default_speaker.wav" # Optional: for a default cloned voice
+        zonos_config_section_name = 'zonos_voice_engine' # Key in YAML/dict config
+        zonos_config = tts_config.get(zonos_config_section_name, {})
+        if zonos_config.get('enabled', False): # Disabled by default unless explicitly enabled
+            try:
+                print("Loading ZonosVoice engine...")
+                # ZonosVoice uses its 'config' param for model_name, device, etc.
+                # 'default_voice' for ZonosVoice is the path to a reference audio file.
+                default_zonos_ref_path = zonos_config.get('default_reference_audio_path')
+
+                engine_instance = ZonosVoice(
+                    language=zonos_config.get('language', 'en'),
+                    default_voice=default_zonos_ref_path, # This is the path to reference audio
+                    config=zonos_config # Pass the whole zonos_voice_engine section
+                )
+                if engine_instance.zonos_model: # Check if Zonos model loaded successfully
+                    self.engines[ZONOS_ENGINE_ID] = engine_instance
+                    print(f"ZonosVoice engine loaded successfully with manager ID: {ZONOS_ENGINE_ID}")
+                    if default_zonos_ref_path:
+                        print(f"ZonosVoice default reference audio set to: {default_zonos_ref_path}")
+                else:
+                    print(f"Failed to initialize the Zonos model for ZonosVoice engine. Check eSpeak NG and model paths/names.")
+            except Exception as e:
+                print(f"Error loading ZonosVoice engine: {e}")
+                import traceback
+                traceback.print_exc()
+
+
         # Set default engine
         if default_voice_preference in self.engines:
             self.default_engine_id = default_voice_preference
+        elif ZONOS_ENGINE_ID in self.engines and tts_config.get('default_voice') == ZONOS_ENGINE_ID: # If Zonos is preferred
+            self.default_engine_id = ZONOS_ENGINE_ID
         elif WubuGLaDOSStyleVoice.VOICE_ID in self.engines: # Fallback 1
              self.default_engine_id = WubuGLaDOSStyleVoice.VOICE_ID
         elif WubuKokoroVoice.VOICE_ID in self.engines: # Fallback 2
             self.default_engine_id = WubuKokoroVoice.VOICE_ID
-        elif self.engines: # Fallback 3 (any loaded engine)
+        elif ZONOS_ENGINE_ID in self.engines: # Fallback for Zonos if other specific ones not chosen/available
+            self.default_engine_id = ZONOS_ENGINE_ID
+        elif self.engines: # Fallback (any loaded engine)
             self.default_engine_id = list(self.engines.keys())[0]
 
         if self.default_engine_id:
-            print(f"TTSManager: Default voice set to '{self.default_engine_id}'")
-            if default_voice_preference not in self.engines and default_voice_preference is not None :
+            print(f"TTSManager: Default voice/engine set to '{self.default_engine_id}'")
+            if default_voice_preference not in self.engines and default_voice_preference is not None:
                  print(f"TTSManager: Note - Preferred default voice '{default_voice_preference}' was not available or failed to load.")
         else:
             print("TTSManager: No TTS engines loaded or no default could be set.")
 
 
-    def get_engine(self, voice_id: str = None) -> BaseTTSEngine | None:
-        target_id = voice_id or self.default_engine_id
+    def get_engine(self, engine_id: str = None) -> BaseTTSEngine | None:
+        """
+        Retrieves a specific TTS engine instance by its registered ID.
+        If engine_id is None, returns the default engine.
+        """
+        target_id = engine_id or self.default_engine_id
         if target_id and target_id in self.engines:
             return self.engines[target_id]
 
-        if voice_id:
-            print(f"Warning: TTS engine/voice ID '{voice_id}' not found or not loaded in manager.")
-        elif not self.default_engine_id: # No specific voice_id, and no default engine set
-             print(f"Warning: No default TTS engine set and no specific voice_id provided.")
-        elif not self.engines: # Should be caught by no default_engine_id too
+        if engine_id: # Only print warning if a specific engine_id was requested and not found
+            print(f"Warning: TTS engine ID '{engine_id}' not found or not loaded in manager.")
+        elif not self.default_engine_id:
+             print(f"Warning: No default TTS engine set and no specific engine_id provided.")
+        elif not self.engines:
             print(f"Warning: No TTS engines available in manager.")
         return None
 
-    def speak(self, text: str, voice_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs):
-        engine = self.get_engine(voice_id)
+    def speak(self, text: str, voice_id: str = None, engine_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs):
+        """
+        Synthesizes and speaks text using a specified engine and voice.
+        :param text: Text to speak.
+        :param voice_id: Specific voice parameter for the engine (e.g., path for Zonos, internal ID for others).
+        :param engine_id: ID of the engine to use (e.g., ZONOS_ENGINE_ID). Uses default if None.
+        :param speed: Playback speed.
+        :param kwargs: Additional engine-specific parameters.
+        """
+        engine = self.get_engine(engine_id)
         if engine:
-            # Use the engine's own default_voice if voice_id for speak() was None and resolved to default_engine_id
-            # Or if a specific voice_id was given to speak() that matches the engine's ID
-            effective_voice_id_for_engine = engine.default_voice
-            if voice_id and voice_id == engine.default_voice : # Ensure we pass the engine's known ID
-                 effective_voice_id_for_engine = voice_id
-
-            engine.speak(text, voice_id=effective_voice_id_for_engine, speed=speed, **kwargs)
+            # The 'voice_id' here is passed directly to the engine's speak method.
+            # The engine itself is responsible for interpreting this voice_id.
+            # For Zonos, it's a path. For others, it might be an internal name.
+            # If voice_id is None, the engine will use its own default_voice.
+            engine.speak(text, voice_id=voice_id, speed=speed, **kwargs)
         else:
-            print(f"TTS Manager: Cannot speak. Engine for voice '{voice_id or 'default'}' not available. Text: {text}")
+            target_engine_desc = engine_id or "default"
+            print(f"TTS Manager: Cannot speak. Engine '{target_engine_desc}' not available. Text: {text}")
 
-    def synthesize_to_file(self, text: str, output_filename: str, voice_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bool:
-        engine = self.get_engine(voice_id)
+    def synthesize_to_file(self, text: str, output_filename: str, voice_id: str = None, engine_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bool:
+        """
+        Synthesizes text to a file using a specified engine and voice.
+        """
+        engine = self.get_engine(engine_id)
         if engine:
-            effective_voice_id_for_engine = engine.default_voice
-            if voice_id and voice_id == engine.default_voice :
-                 effective_voice_id_for_engine = voice_id
-            return engine.synthesize_to_file(text, output_filename, voice_id=effective_voice_id_for_engine, speed=speed, **kwargs)
-        print(f"TTS Manager: Cannot synthesize to file. Engine for voice '{voice_id or 'default'}' not available.")
+            return engine.synthesize_to_file(text, output_filename, voice_id=voice_id, speed=speed, **kwargs)
+
+        target_engine_desc = engine_id or "default"
+        print(f"TTS Manager: Cannot synthesize to file. Engine '{target_engine_desc}' not available.")
         return False
 
-    def synthesize_to_bytes(self, text: str, voice_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bytes | None:
-        engine = self.get_engine(voice_id)
+    def synthesize_to_bytes(self, text: str, voice_id: str = None, engine_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bytes | None:
+        """
+        Synthesizes text to bytes using a specified engine and voice.
+        """
+        engine = self.get_engine(engine_id)
         if engine:
-            effective_voice_id_for_engine = engine.default_voice
-            if voice_id and voice_id == engine.default_voice :
-                 effective_voice_id_for_engine = voice_id
-            return engine.synthesize_to_bytes(text, voice_id=effective_voice_id_for_engine, speed=speed, **kwargs)
-        print(f"TTS Manager: Cannot synthesize to bytes. Engine for voice '{voice_id or 'default'}' not available.")
+            return engine.synthesize_to_bytes(text, voice_id=voice_id, speed=speed, **kwargs)
+
+        target_engine_desc = engine_id or "default"
+        print(f"TTS Manager: Cannot synthesize to bytes. Engine '{target_engine_desc}' not available.")
         return None
 
     def get_available_voices(self) -> list:
@@ -173,15 +233,19 @@ if __name__ == '__main__':
     # For __main__ testing, we need constants from the voice modules.
     # This structure assumes that when running this file directly, Python can find sibling modules.
     # `python -m src.wubu.tts.tts_engine_manager` from project root might be needed.
-    from .glados_voice import DEFAULT_MODEL_SUBDIR as WUBU_GLADOS_DEFAULT_MODEL_SUBDIR, \
-                            DEFAULT_SPEAKER_WAV_FILENAME as WUBU_GLADOS_DEFAULT_SPEAKER_WAV, \
-                            WubuGLaDOSStyleVoice
-    from .kokoro_voice import DEFAULT_KOKORO_COQUI_MODEL_NAME as WUBU_KOKORO_DEFAULT_MODEL_NAME, \
-                            WubuKokoroVoice
+    from .glados_voice import WubuGLaDOSStyleVoice # Only import class for VOICE_ID
+    from .kokoro_voice import WubuKokoroVoice # Only import class for VOICE_ID
+    # ZonosVoice class is already imported; ZONOS_ENGINE_ID is defined in this file.
+
+    # Dummy paths for testing (these won't actually work unless files exist and models are downloaded)
+    # For real testing of individual engines, use their own __main__ blocks or dedicated test files.
+    WUBU_GLADOS_DEFAULT_MODEL_SUBDIR = "glados_tts_models"
+    WUBU_GLADOS_DEFAULT_SPEAKER_WAV = "glados_reference.wav" # Needs to exist in subdir
+    WUBU_KOKORO_DEFAULT_MODEL_NAME = "tts_models/en/ljspeech/tacotron2-DDC" # Coqui default
 
     dummy_manager_config = {
         'tts': {
-            'default_voice': WubuGLaDOSStyleVoice.VOICE_ID,
+            'default_voice': ZONOS_ENGINE_ID, # Make Zonos default for this test if enabled
             'wubu_glados_style_voice': {
                 'enabled': True, 'language': 'en',
                 'model_subdir': WUBU_GLADOS_DEFAULT_MODEL_SUBDIR,
@@ -190,38 +254,74 @@ if __name__ == '__main__':
             },
             'wubu_kokoro_voice': {
                 'enabled': True, 'language': 'en',
-                'engine_type': WubuKokoroVoice.ENGINE_TYPE_COQUI,
+                'engine_type': WubuKokoroVoice.ENGINE_TYPE_COQUI, # Ensure this matches class const
                 'coqui_model_name': WUBU_KOKORO_DEFAULT_MODEL_NAME,
                 'use_gpu': False
+            },
+            'zonos_voice_engine': { # Add Zonos config
+                'enabled': True, # Set to True to test Zonos loading
+                'language': 'en',
+                'zonos_model_name': "Zyphra/Zonos-v0.1-transformer", # Default from ZonosVoice
+                'device': "cpu", # Use CPU for this test to avoid GPU dependency here
+                'default_reference_audio_path': "path/to/your/test_speaker.wav" # IMPORTANT: User must change this
             }
         }
     }
+    # Advise user about the dummy path for Zonos testing
+    print("INFO: The TTSEngineManager test config includes Zonos with a dummy 'default_reference_audio_path'.")
+    print(f"      To fully test Zonos TTS via this script, update '{dummy_manager_config['tts']['zonos_voice_engine']['default_reference_audio_path']}'")
+    print(f"      in tts_engine_manager.py's __main__ block to a valid .wav file path and ensure eSpeak NG is installed.")
+    print(f"      Also ensure you have run 'pip install zonos'.\n")
+
 
     manager = TTSEngineManager(config=dummy_manager_config)
 
     if not manager.engines:
         print("No engines loaded. Check configs and individual engine logs (especially dummy file creation).")
     else:
-        print(f"\nAvailable voices in manager: {manager.get_available_voices()}")
+        print(f"\nAvailable voices in manager: {manager.get_available_voices()}") # This will be empty for Zonos as it's dynamic
         print(f"Default engine ID in manager: {manager.default_engine_id}")
 
-        print("\n--- Testing speech with default voice (WuBu GLaDOS-Style) ---")
-        manager.speak("Hello, I am WuBu, speaking with my default GLaDOS-style voice.")
+        # Test default engine (which might be Zonos if enabled and no other default is forced)
+        if manager.default_engine_id:
+            print(f"\n--- Testing speech with default engine: {manager.default_engine_id} ---")
+            if manager.default_engine_id == ZONOS_ENGINE_ID:
+                print(f"(This will use Zonos with its configured default_reference_audio_path: {dummy_manager_config['tts']['zonos_voice_engine']['default_reference_audio_path']})")
+                manager.speak("Hello from WuBu, testing the default Zonos engine.", engine_id=ZONOS_ENGINE_ID) # Use engine_id
+            elif manager.default_engine_id == WubuGLaDOSStyleVoice.VOICE_ID :
+                manager.speak("Hello, I am WuBu, speaking with my default GLaDOS-style voice.", engine_id=WubuGLaDOSStyleVoice.VOICE_ID)
+            elif manager.default_engine_id == WubuKokoroVoice.VOICE_ID:
+                 manager.speak("Hello, this is Kokoro from WuBu, with a standard voice.", engine_id=WubuKokoroVoice.VOICE_ID)
 
-        print(f"\n--- Testing speech with specific voice: {WubuKokoroVoice.VOICE_ID} ---")
-        manager.speak("Hello, this is Kokoro from WuBu, with a standard voice.", voice_id=WubuKokoroVoice.VOICE_ID)
 
-        manager.synthesize_to_file(
-            "WuBu here. This is a file synthesis test using my GLaDOS-style voice.",
-            "manager_wubu_glados_style_test.wav",
-            voice_id=WubuGLaDOSStyleVoice.VOICE_ID
-        )
-        manager.synthesize_to_file(
-            "This is WuBu's Kokoro voice, testing file synthesis.",
-            "manager_wubu_kokoro_test.wav",
-            voice_id=WubuKokoroVoice.VOICE_ID
-        )
-        print("\nFile synthesis tests complete (check .wav files, may fail if dummy models used by voices).")
-        print("\n--- Testing with a non-existent voice ID ---")
-        manager.speak("This message should indicate voice not found.", voice_id="NonExistentVoice99")
+        if WubuGLaDOSStyleVoice.VOICE_ID in manager.engines:
+            print(f"\n--- Testing speech with specific engine: {WubuGLaDOSStyleVoice.VOICE_ID} ---")
+            manager.speak("Hello, I am WuBu, speaking with GLaDOS-style voice.", engine_id=WubuGLaDOSStyleVoice.VOICE_ID)
+            manager.synthesize_to_file(
+                "WuBu here. This is a file synthesis test using GLaDOS-style voice.",
+                "manager_wubu_glados_style_test.wav", # Output in current dir
+                engine_id=WubuGLaDOSStyleVoice.VOICE_ID
+            )
+
+        if WubuKokoroVoice.VOICE_ID in manager.engines:
+            print(f"\n--- Testing speech with specific engine: {WubuKokoroVoice.VOICE_ID} ---")
+            manager.speak("Hello, this is Kokoro from WuBu, with a standard voice.", engine_id=WubuKokoroVoice.VOICE_ID)
+            manager.synthesize_to_file(
+                "This is WuBu's Kokoro voice, testing file synthesis.",
+                "manager_wubu_kokoro_test.wav", # Output in current dir
+                engine_id=WubuKokoroVoice.VOICE_ID
+            )
+
+        if ZONOS_ENGINE_ID in manager.engines:
+            print(f"\n--- Testing speech with specific engine: {ZONOS_ENGINE_ID} ---")
+            print(f"(This requires a valid reference audio path to be passed as 'voice_id' or configured as default in ZonosVoice)")
+            # To test Zonos properly here, you'd need a real audio file path for voice_id:
+            # manager.speak("Testing Zonos voice cloning.", engine_id=ZONOS_ENGINE_ID, voice_id="actual/path/to/your/speaker.wav")
+            # For now, it will use the dummy default_reference_audio_path from config if called without voice_id
+            manager.speak("Testing Zonos default speaker if configured.", engine_id=ZONOS_ENGINE_ID)
+
+
+        print("\nFile synthesis tests complete (check .wav files). Zonos tests depend on valid setup.")
+        print("\n--- Testing with a non-existent engine ID ---")
+        manager.speak("This message should indicate engine not found.", engine_id="NonExistentEngine99")
     print("\nTTSEngineManager test finished.")

@@ -1,12 +1,16 @@
-# WuBu User Interface (UI) Package
+# WuBu UI Package
+#
+# This package is responsible for the graphical user interface (GUI) of WuBu.
+# It uses CustomTkinter as the primary UI framework.
 
-# This package will contain modules related to the WuBu UI,
-# which could be a text-based console UI, a web UI, or a desktop GUI.
+# Key components:
+# - wubu_ui.py: Contains the main application class (WubuApp) and UI layout.
 
-# For now, it might just re-export the main UI class or function.
-# from .wubu_ui import WuBu_UI_Main # Example if wubu_ui.py has a main class
+# To run the UI (example, assuming main.py or similar calls it):
+# from wubu.ui.wubu_ui import main as run_ui
+# if __name__ == "__main__":
+# run_ui()
 
-# print("WuBu UI package initialized.")
+__all__ = ["WubuApp", "main"]
 
-# TODO: Decide on the primary UI framework (e.g., Qt for Python, CustomTkinter, Streamlit, Textual TUI).
-# The choice will dictate the structure and content of this package.
+from .wubu_ui import WubuApp, main

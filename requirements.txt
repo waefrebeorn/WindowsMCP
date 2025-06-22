@@ -21,7 +21,9 @@ pyperclip
 pycaw
 Flask
 PyYAML
-TTS
 soundfile
 numpy
 torchaudio
+customtkinter
+zonos
+word2number

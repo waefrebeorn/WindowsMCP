@@ -56,16 +56,79 @@ def normalize_spoken_text(text):
     text = text.lower()
 
     # Basic punctuation removal (can be customized)
-    text = re.sub(r'[^\w\s\-\']', '', text) # Keep words, spaces, hyphens, apostrophes
+    # Keep words, spaces, hyphens, apostrophes. Numbers also kept for word2num.
+    text = re.sub(r'[^\w\s\-\'\d]', '', text)
 
-    # TODO: Word-to-number conversion (e.g., "five" to "5")
-    # This is complex and usually requires a dedicated library or extensive rules.
-    # Example: text = text.replace(" five", " 5").replace(" ten ", " 10 ") # very naive
+    # --- Word-to-number conversion ---
+    try:
+        from word2number import w2n
+        # w2n.word_to_num can convert phrases like "two point five" to 2.5
+        # or "one hundred and twenty three" to 123.
+        # It's best to apply this before removing filler words that might be part of a number phrase (e.g. "a hundred").
+        # This is a simple pass; more complex scenarios might need sentence tokenization
+        # and applying w2n to potential number phrases.
 
-    # TODO: Remove filler words (customize list as needed)
-    # filler_words = ['uh', 'um', 'uhm', 'ah', 'like', 'you know']
-    # for word in filler_words:
-    #     text = re.sub(r'\b' + word + r'\b', '', text)
+        # A simple approach: iterate through words and try to convert segments.
+        # This is still naive. A more robust solution would use NLP to identify number phrases.
+        # For now, let's try a regex-based replacement for simple number words if w2n is too broad.
+        # The library w2n.word_to_num(text) tries to convert the first number phrase it finds.
+        # This might not be ideal if text is "set timer for five minutes and alert in one hour".
+
+        # A more targeted approach could be to replace known number words.
+        # However, w2n is generally good. Let's try to use it by splitting and rejoining.
+        # This is still not perfect for phrases like "two point five".
+        words = text.split()
+        processed_words = []
+        i = 0
+        while i < len(words):
+            # Attempt to convert word by word or small phrases - this is tricky.
+            # For simplicity in this step, we'll assume w2n can handle full sentences
+            # or we'd need a more complex phrase detection.
+            # Let's assume the user's speech for numbers is somewhat direct.
+            # A common pattern: "number <unit>" e.g. "five minutes"
+            # If w2n.word_to_num is applied to the whole string, it finds the first number.
+            # This is usually what's needed for commands like "set volume to five".
+            try:
+                # Try to convert the whole text, this might be too greedy or only find the first.
+                # A better way is to find number phrases.
+                # For now, we'll stick to a simpler replacement strategy if a full one is too complex.
+                # The original TODO was "five" to "5".
+
+                # Let's use a simpler list for direct replacement before trying full w2n for robustness.
+                simple_num_map_to_digit = {
+                    'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+                    'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9',
+                    'ten': '10'
+                    # Add more common small numbers if needed
+                }
+                # Replace standalone number words first
+                for word, digit in simple_num_map_to_digit.items():
+                    text = re.sub(r'\b' + word + r'\b', digit, text)
+
+                # After simple replacement, try w2n for more complex phrases if they remain
+                # This part is tricky because w2n might convert parts of words if not careful.
+                # Example: "winner" -> "win 1". So, apply carefully.
+                # For now, the simple map above is safer than a general w2n pass on whole text.
+                # If using w2n, it should be on identified number phrases.
+                # print(f"Text after simple num replace: {text}")
+
+            except Exception as e: # Broad exception for w2n issues
+                # print(f"Word to number conversion issue (w2n): {e}")
+                pass # Keep text as is if w2n fails
+
+    except ImportError:
+        print("Warning: 'word2number' library not found. Spoken numbers will not be converted to digits.")
+        # Fallback: text = text.replace(" five", " 5").replace(" ten ", " 10 ") # very naive placeholder
+
+    # --- Remove filler words ---
+    filler_words = [
+        'uh', 'um', 'uhm', 'ah', 'hmm', 'mhm',
+        'like', 'you know', 'actually', 'basically', 'literally',
+        'please', 'thank you', 'thanks' # Optional: remove politeness if commands are strict
+    ]
+    # Remove whole words/phrases
+    for filler in filler_words:
+        text = re.sub(r'\b' + re.escape(filler) + r'\b', '', text, flags=re.IGNORECASE)
 
     text = text.strip() # Remove leading/trailing whitespace
     text = re.sub(r'\s+', ' ', text) # Normalize multiple spaces to single space
