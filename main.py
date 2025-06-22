@@ -34,6 +34,7 @@ MAX_CONSECUTIVE_TOOL_CALLS = 3
 # Local module imports
 from config_manager import config, DEFAULT_CONFIG  # ROOT_DIR removed as unused
 from console_ui import ConsoleFormatter, console
+from desktop_tools.context_provider import ContextProvider # WuBu Context
 
 # Removed MCPClient and MCPConnectionError imports as they are no longer used.
 # from mcp_client import MCPClient, MCPConnectionError
@@ -160,6 +161,7 @@ async def _process_command(
     tool_dispatcher,
     console,
     logger,
+    context_provider: ContextProvider, # WuBu Context
     ollama_model_name: str = None,  # Only for Ollama
     ollama_history: list = None,  # Only for Ollama, stores message history
     gemini_model_resource_name: str = None,  # Only for Gemini
@@ -170,11 +172,81 @@ async def _process_command(
     Returns True if the command processing completed (even with handled errors),
     False if a critical/unrecoverable error occurred (e.g., max API retries).
     """
-    if not user_input_str.strip():
-        return True  # Considered processed, no actual error
+    if not user_input_str.strip(): # No actual command from user
+        # If context_provider.current_file_path is set, we could potentially summarize it or offer actions.
+        # For now, just return as if processed if there's no user input.
+        return True
 
-    intervention_occurred_this_turn = False  # Flag for Ollama intervention
-    consecutive_tool_calls_count = 0  # Initialize/reset for each user command
+    # WuBu Context: Gather context using the provider
+    # The user_input_str at this point is the actual command after activation phrase stripping
+    gathered_context = context_provider.gather_context(user_query=user_input_str)
+
+    context_string_parts = []
+    # context_summary_for_prompt = [] # Could be used for a shorter context summary if needed
+
+    if gathered_context.get("project_root_hash"):
+        # context_summary_for_prompt.append(f"Project Root Hash: {gathered_context['project_root_hash']}")
+        # Prepending full project hash might be too verbose for every message.
+        # Consider adding it to system prompt or only if specifically requested.
+        pass
+
+    if gathered_context.get("current_file"):
+        cf = gathered_context["current_file"]
+        relative_path = cf['path']
+        context_string_parts.append(f"Current File: {relative_path} (Hash: {cf.get('hash', 'N/A')[:7]}...)\nContent:\n{cf['content']}")
+        # context_summary_for_prompt.append(f"Current File: {relative_path}")
+
+    if gathered_context.get("referenced_files"):
+        for rf in gathered_context["referenced_files"]:
+            if gathered_context.get("current_file") and rf['path'] == gathered_context["current_file"]['path']:
+                continue
+            relative_path_rf = rf['path']
+            context_string_parts.append(f"Referenced File: {relative_path_rf} (Hash: {rf.get('hash', 'N/A')[:7]}...)\nContent:\n{rf['content']}")
+
+    if gathered_context.get("open_files"):
+        # open_files_summary_paths = []
+        for of in gathered_context["open_files"]:
+            is_current = gathered_context.get("current_file") and of['path'] == gathered_context["current_file"]['path']
+            is_referenced_this_turn = any(rf['path'] == of['path'] for rf in gathered_context.get("referenced_files", []))
+
+            if not is_current and not is_referenced_this_turn:
+                relative_path_of = of['path']
+                context_string_parts.append(f"Open File (Snippet): {relative_path_of} (Hash: {of.get('hash', 'N/A')[:7]}...)\nContent Snippet:\n{of['content_snippet']}")
+                # open_files_summary_paths.append(relative_path_of)
+        # if open_files_summary_paths:
+        #      context_summary_for_prompt.append(f"Other Open Files: {', '.join(open_files_summary_paths)}")
+
+    llm_user_query_content = user_input_str
+
+    context_header = ""
+    if context_string_parts:
+        context_header = "Relevant Context:\n" + "\n\n".join(context_string_parts) + "\n\n"
+
+    final_llm_input_message = context_header + f"User Query: {llm_user_query_content}"
+
+    # Simulated editor state update for the NEXT turn.
+    # If the user's current query @-referenced a file, make it "current" for the next interaction.
+    if gathered_context.get("referenced_files"):
+        first_ref_file_info = gathered_context["referenced_files"][0]
+
+        # Get current list of open files from provider to persist them
+        current_open_rel_paths = [str(p.relative_to(context_provider.project_root)) for p in context_provider.open_file_paths]
+
+        # Add all @-referenced files to the list of "open files" for next turn, avoid duplicates
+        next_turn_open_files = list(set(
+            [rf['path'] for rf in gathered_context.get("referenced_files", [])] +
+            current_open_rel_paths
+        ))
+
+        context_provider.update_editor_state(
+            current_file_rel_path=first_ref_file_info['path'],
+            open_files_rel_paths=next_turn_open_files
+        )
+        logger.info(f"Simulated editor state: current file set to '{first_ref_file_info['path']}' for next turn due to @-reference.")
+
+
+    intervention_occurred_this_turn = False
+    consecutive_tool_calls_count = 0
     command_processed_successfully = True
     try:
         current_retry_attempt = 0
@@ -183,7 +255,6 @@ async def _process_command(
         while current_retry_attempt < MAX_API_RETRIES:
             try:
                 if current_retry_attempt > 0:
-                    # Common delay logic for retries, message customized by provider
                     delay_message_provider = (
                         "Gemini" if llm_provider == "gemini" else "Ollama"
                     )
@@ -193,48 +264,44 @@ async def _process_command(
                     ):
                         await asyncio.sleep(current_delay)
 
-                # API call logic properly indented under the try block
                 if llm_provider == "gemini":
                     with console.status(
                         f"[bold green]Gemini is thinking... (Attempt {current_retry_attempt + 1})[/bold green]",
                         spinner="dots",
                     ):
-                        response = await chat_session.send_message(  # chat_session is the Gemini chat
-                            message=user_input_str,
+                        # For Gemini, prepend context to the user_input_str for the send_message call
+                        response = await chat_session.send_message(
+                            message=final_llm_input_message, # Use the context-augmented message
                             config=types.GenerateContentConfig(
                                 tools=[DESKTOP_TOOLS_INSTANCE]
-                            ),  # Use new DESKTOP_TOOLS_INSTANCE
+                            ),
                         )
-                    break  # Success
+                    break
                 elif llm_provider == "ollama":
                     with console.status(
                         f"[bold green]Ollama is thinking... (Attempt {current_retry_attempt + 1})[/bold green]",
                         spinner="dots",
                     ):
-                        # Add user message to history
+                        # For Ollama, the final_llm_input_message goes into the history
                         ollama_history.append(
-                            {"role": "user", "content": user_input_str}
+                            {"role": "user", "content": final_llm_input_message} # Use the context-augmented message
                         )
-
-                        # Get tools in Ollama format using the new schema function
                         ollama_formatted_tools = get_desktop_ollama_schema()
-
                         response = await asyncio.to_thread(
-                            chat_session.chat,  # chat_session is the Ollama client
+                            chat_session.chat,
                             model=ollama_model_name,
                             messages=ollama_history,
                             tools=(
                                 ollama_formatted_tools
                                 if ollama_formatted_tools
                                 else None
-                            ),  # Pass tools to Ollama
+                            ),
                         )
-                    # Add assistant response to history (even if it's a tool call)
                     if response and response.get("message"):
                         ollama_history.append(response["message"])
-                    break  # Success for Ollama
+                    break
 
-            except ServerError as e:  # Gemini specific
+            except ServerError as e:
                 # This exception block is now correctly aligned with the try block
                 if (
                     llm_provider == "gemini"
@@ -992,8 +1059,9 @@ async def main_loop():
             gemini_model_resource_name = f"models/{GEMINI_MODEL_NAME}"
             llm_client = client  # For Gemini, llm_client is the genai.Client itself
             system_instruction_text = (
-                "You are an expert AI assistant for Windows Desktop Automation. "
+                "You are WuBu, an expert AI assistant for Windows Desktop Automation. "
                 "Your goal is to help users by using the provided tools to interact with their desktop environment. "
+                "You will be provided with relevant context, including file contents and project information. Use this context to understand and respond to user queries or perform actions. " # Added context instruction
                 "You can control the mouse, keyboard, capture screen content, and analyze images using a vision model. "
                 "First, think step-by-step about the user's request. "
                 "Then, call the necessary tools with correctly formatted arguments. "
@@ -1013,7 +1081,7 @@ async def main_loop():
                         role="model",
                         parts=[
                             types.Part(
-                                text="Understood. I will act as an expert AI assistant for Windows Desktop Automation."
+                                text="Understood. I am WuBu, an expert AI assistant for Windows Desktop Automation. I will help you interact with your desktop." # Changed
                             )
                         ],
                     ),
@@ -1050,7 +1118,8 @@ async def main_loop():
                 )
 
             ollama_system_prompt = (
-                "You are an AI assistant for Windows Desktop Automation. Use tools to interact with the desktop environment. "
+                "You are WuBu, an AI assistant for Windows Desktop Automation. Use tools to interact with the desktop environment. "
+                "You will be provided with relevant context, including file contents and project information. Use this context to understand and respond to user queries or perform actions. " # Added context instruction
                 "You can control mouse, keyboard, capture screen, and analyze images. "
                 "Analyze requests, then call tools with correct arguments. Use `capture_full_screen` or `capture_screen_region` first if you need to see something, "
                 "then use `analyze_image_with_vision_model` to understand its content or find text.\n\n"
@@ -1092,6 +1161,31 @@ async def main_loop():
     # Instantiate the new DesktopToolDispatcher
     tool_dispatcher = DesktopToolDispatcher()
     # mcp_client and mcp_client_instance are no longer needed.
+
+    # WuBu Context: Initialize ContextProvider
+    # Using current working directory "." as the project root.
+    # This could be made configurable later (e.g., via command-line arg or config.json).
+    try:
+        console.print("[dim]Initializing WuBu Context Provider (indexing current directory)...[/dim]")
+        # TODO: Make project_root configurable
+        # For now, using current directory from where script is run
+        project_root_for_context = "."
+        context_provider = ContextProvider(project_root_for_context)
+        console.print(f"[dim]Context Provider initialized for root: {context_provider.project_root.resolve()}[/dim]")
+        if context_provider.indexer.get_root_hash():
+            console.print(f"[dim]Initial project index complete. Root hash: {context_provider.indexer.get_root_hash()[:10]}...[/dim]")
+        else:
+            console.print("[yellow]Warning: Project indexing yielded no files or failed to build Merkle tree.[/yellow]")
+
+    except ValueError as e:
+        logger.error(f"Failed to initialize ContextProvider: {e}", exc_info=True)
+        console.print(Panel(f"[bold red]Error initializing ContextProvider: {e}. Context features will be disabled.[/bold red]", title="[red]Context Error[/red]"))
+        context_provider = None # Disable context features
+    except Exception as e: # Catch any other unexpected errors during ContextProvider init
+        logger.error(f"Unexpected error initializing ContextProvider: {e}", exc_info=True)
+        console.print(Panel(f"[bold red]Unexpected error initializing ContextProvider: {e}. Context features will be disabled.[/bold red]", title="[red]Context Error[/red]"))
+        context_provider = None
+
 
     try:
         # Removed MCP server startup logic.
@@ -1144,6 +1238,7 @@ async def main_loop():
                         "tool_dispatcher": tool_dispatcher,
                         "console": console,
                         "logger": logger,
+                        "context_provider": context_provider, # WuBu Context
                         "is_test_file_command": True,
                     }
                     if LLM_PROVIDER == "ollama":
@@ -1155,7 +1250,10 @@ async def main_loop():
                             gemini_model_resource_name
                         )
 
-                    if not await _process_command(**process_args):
+                    if context_provider is None: # Basic check if context provider failed to init
+                        console.print("[yellow]Skipping command due to ContextProvider initialization failure.[/yellow]")
+                        file_command_errors +=1
+                    elif not await _process_command(**process_args):
                         file_command_errors += 1
                     if (
                         i < file_command_total - 1
@@ -1194,15 +1292,20 @@ async def main_loop():
                 "tool_dispatcher": tool_dispatcher,
                 "console": console,
                 "logger": logger,
+                "context_provider": context_provider, # WuBu Context
             }
             if LLM_PROVIDER == "ollama":
                 process_args["ollama_model_name"] = OLLAMA_MODEL_NAME
+                process_padding_token = "" # TODO: Add this if needed for specific models
                 process_args["ollama_history"] = chat_session
                 process_args["chat_session"] = llm_client
             elif LLM_PROVIDER == "gemini":
                 process_args["gemini_model_resource_name"] = gemini_model_resource_name
 
-            await _process_command(**process_args)
+            if context_provider is None:
+                 console.print("[yellow]Cannot execute test command due to ContextProvider initialization failure.[/yellow]")
+            else:
+                await _process_command(**process_args)
             console.print(
                 f"\n[bold cyan]>>> Test command finished ({LLM_PROVIDER.capitalize()}). Exiting. <<<[/bold cyan]"
             )
@@ -1258,9 +1361,39 @@ async def main_loop():
                             if user_input_str:
                                 console.print(
                                     HTML(
-                                        f"<ansigreen><b>You (Voice): </b></ansigreen>{user_input_str}"
+                                        f"<ansigreen><b>Transcribed: </b></ansigreen>{user_input_str}"
                                     )
                                 )
+                                # Check for activation phrase
+                                activation_phrases = ["hey wubu", "yo wubu", "wubu", "wooboo", "wuhboo"]
+                                normalized_input = user_input_str.lower().strip()
+                                activated = False
+                                actual_command = ""
+
+                                for phrase in activation_phrases:
+                                    if normalized_input.startswith(phrase):
+                                        activated = True
+                                        # Strip the phrase and any leading/trailing space
+                                        actual_command = user_input_str[len(phrase):].strip()
+                                        console.print(HTML(f"<ansigreen><b>WuBu Activated! Command: </b></ansigreen>{actual_command if actual_command else 'Listening...'}"))
+                                        break
+
+                                if not activated:
+                                    console.print("[cyan]WuBu is listening... (activation phrase not detected).[/cyan]")
+                                    continue # Listen again
+
+                                user_input_str = actual_command # This will be empty if only activation phrase was said
+                                if not user_input_str: # If only "WuBu" was said, prompt for command
+                                    prompt_text = HTML(
+                                        f"<ansiblue><b>WuBu is listening for your command: </b></ansiblue>"
+                                    )
+                                    user_input_str = await asyncio.to_thread(
+                                        session.prompt, prompt_text, reserve_space_for_menu=0
+                                    )
+                                    if not user_input_str: # If still no command, loop again
+                                        console.print("[cyan]No command given. WuBu is listening...[/cyan]")
+                                        continue
+
                             else:
                                 console.print(
                                     "[yellow]Transcription failed or no speech detected. Please try again or type your command.[/yellow]"
@@ -1298,14 +1431,22 @@ async def main_loop():
                     )
                     break
 
-                if (
+                if ( # This check now happens after potential voice activation and secondary prompt
                     not user_input_str
-                ):  # If voice input failed and resulted in empty string
-                    continue
+                ):
+                    if args.voice: # If voice mode and still no input, it was handled above
+                        console.print("[cyan]No command given. WuBu is listening...[/cyan]")
+                        continue
+                    else: # If text mode and no input, it's a blank line, just loop.
+                        continue
+
 
                 if user_input_str.strip().lower() == "exit":
                     console.print("[bold yellow]Exiting assistant...[/bold yellow]")
                     break
+
+                # If in voice mode and user_input_str is now populated (either from initial command or secondary prompt)
+                # it's ready for processing. For text mode, it's also ready.
 
                 process_args = {
                     "user_input_str": user_input_str,
@@ -1314,6 +1455,7 @@ async def main_loop():
                     "tool_dispatcher": tool_dispatcher,
                     "console": console,
                     "logger": logger,
+                    "context_provider": context_provider, # WuBu Context
                 }
                 if LLM_PROVIDER == "ollama":
                     process_args["ollama_model_name"] = OLLAMA_MODEL_NAME
@@ -1323,6 +1465,11 @@ async def main_loop():
                     process_args["gemini_model_resource_name"] = (
                         gemini_model_resource_name
                     )
+
+                if context_provider is None:
+                    console.print("[yellow]Cannot process command due to ContextProvider initialization failure. Please restart.[/yellow]")
+                    # Potentially offer a way to re-initialize or continue without context. For now, skip.
+                    continue
 
                 await _process_command(**process_args)
 
