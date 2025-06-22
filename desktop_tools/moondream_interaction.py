@@ -14,11 +14,11 @@ except ImportError:
     # Re-raise or handle as appropriate for your application's startup
     raise
 
-# Attempt to import configuration, fallback if not found
-try:
-    from config_manager import config as global_config
-except ImportError:
-    global_config = {}
+# Configuration will be passed to MoondreamV2 instance if needed, or handled by ToolDispatcher.
+# try:
+#     from config_manager import config as global_config
+# except ImportError:
+#     global_config = {}
 
 logger = logging.getLogger(__name__)
 
@@ -189,79 +189,13 @@ class MoondreamV2:
             logger.error(f"Error during MoondreamV2 point: {e}", exc_info=True)
             return {"error": f"Pointing failed: {e}"}
 
-# --- Global Moondream Analyzer Instance ---
-# Initialize this once, as model loading can be slow.
-# Handle potential errors during initialization gracefully.
-moondream_analyzer = None
-try:
-    # Check if MOONDREAM_V2_ENABLED is explicitly set to false in config
-    # Default to True if not specified or if config is missing
-    moondream_enabled = global_config.get("MOONDREAM_V2_ENABLED", True)
-    if str(moondream_enabled).lower() == 'true':
-        logger.info("MOONDREAM_V2_ENABLED is true. Initializing MoondreamV2 analyzer...")
-        moondream_analyzer = MoondreamV2()
-    else:
-        logger.info("MOONDREAM_V2_ENABLED is false. MoondreamV2 analyzer will not be initialized.")
-except Exception as e:
-    logger.error(f"Failed to initialize global MoondreamV2 analyzer: {e}", exc_info=True)
-    # Application might still run but vision capabilities will be missing.
+# --- Global Moondream Analyzer Instance (REMOVED) ---
+# Initialization and management of MoondreamV2 instance will be handled by DesktopToolDispatcher
+# based on configuration.
 
-def analyze_image_with_moondream(
-    image_input: str | Image.Image, prompt_text: str
-) -> dict:
-    """
-    Analyzes an image using the globally initialized MoondreamV2 model by asking a question (prompt_text).
-    This function primarily uses the query capability of MoondreamV2.
-
-    Args:
-        image_input: Path to the image file (str) or a PIL Image object.
-        prompt_text: The text prompt/question to ask about the image.
-                     For OCR, use prompts like "Transcribe the text."
-
-    Returns:
-        A dictionary containing the parsed response from MoondreamV2 (usually the answer to the prompt)
-        or an error dictionary.
-        Example: {"status": "success", "data": {"text": "The transcribed text..."}}
-                 {"error": "Details of the error."}
-    """
-    if not moondream_analyzer:
-        return {"error": "MoondreamV2 analyzer is not initialized or failed to load."}
-    if not moondream_analyzer.model: # Double check if model loaded within analyzer
-         return {"error": "MoondreamV2 model within analyzer is not available."}
-
-    pil_image = None
-    try:
-        if isinstance(image_input, str):  # Path to image file
-            if not os.path.exists(image_input):
-                return {"error": f"Image file not found at path: {image_input}"}
-            pil_image = Image.open(image_input)
-        elif isinstance(image_input, Image.Image):  # PIL Image object
-            pil_image = image_input
-        else:
-            return {
-                "error": "Invalid image_input type. Must be a file path (str) or PIL.Image.Image object."
-            }
-
-        if not pil_image: # Should not happen if logic above is correct
-            return {"error": "Failed to load image."}
-
-        # Use the query method of the MoondreamV2 class instance
-        result = moondream_analyzer.query(pil_image, prompt_text)
-
-        if "error" in result:
-            return result # Propagate error from the query method
-        elif "answer" in result:
-            # Standardize the output format slightly to be more like the old API's success case
-            return {"status": "success", "data": {"text": result["answer"], "raw_response": result}}
-        else:
-            # This case should ideally be handled by the query method returning an error
-            return {"error": "MoondreamV2 query returned an unexpected result structure.", "raw_response": result}
-
-    except FileNotFoundError: # Should be caught by os.path.exists earlier
-        return {"error": f"Image file not found at path: {image_input}"}
-    except Exception as e:
-        logger.error(f"An unexpected error occurred in analyze_image_with_moondream: {e}", exc_info=True)
-        return {"error": f"An unexpected error occurred: {e}"}
+# The analyze_image_with_moondream function is also removed from here.
+# DesktopToolDispatcher will call methods directly on its MoondreamV2 instance.
+# If a standalone utility function is ever needed, it should be designed to accept a MoondreamV2 instance.
 
 
 if __name__ == "__main__":
@@ -269,12 +203,21 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     logger.info("Moondream Interaction Module Example (Transformers-based)")
 
-    if not moondream_analyzer:
-        logger.error("Global moondream_analyzer instance is not available. Example cannot run.")
+    # To test MoondreamV2 class directly:
+    try:
+        logger.info("Attempting to initialize MoondreamV2 directly for testing...")
+        # Example: Using default model_id and revision.
+        # In real use, these could come from a config passed to DesktopToolDispatcher.
+        test_analyzer = MoondreamV2(model_id="vikhyatk/moondream2", revision="2025-06-21") # Use the documented revision
+        if not test_analyzer.model:
+             logger.error("Moondream model within test_analyzer is not loaded. Example cannot run.")
+             exit(1)
+        logger.info("MoondreamV2 test_analyzer initialized successfully.")
+    except Exception as e:
+        logger.error(f"Failed to initialize MoondreamV2 for direct test: {e}", exc_info=True)
+        logger.error("Ensure 'transformers' and 'torch' are installed and model is accessible.")
         exit(1)
-    if not moondream_analyzer.model:
-        logger.error("Moondream model within analyzer is not loaded. Example cannot run.")
-        exit(1)
+
 
     # 1. Create a dummy image for testing
     test_image_path = "test_image_moondream_transformers.png"

@@ -1,20 +1,10 @@
 import pyautogui
 
-try:
-    from config_manager import config
-except ImportError:
-    # Fallback if config_manager is not in the Python path directly
-    # This might happen if desktop_tools is used as a standalone library
-    # In the main application, config_manager should be accessible
-    print(
-        "Warning: config_manager not found. Using PyAutoGUI default settings for mouse.py."
-    )
-    config = {}
-
-# Apply global PyAutoGUI settings from config
-pyautogui.FAILSAFE = config.get("PYAUTOGUI_FAILSAFE_ENABLED", True)
-pyautogui.PAUSE = config.get("PYAUTOGUI_PAUSE_PER_ACTION", 0.1)
-
+# PyAutoGUI global settings (FAILSAFE, PAUSE) will use their library defaults.
+# If they need to be configurable, DesktopToolDispatcher or WuBuEngine can set them once at startup
+# using values from wubu_config.yaml. For now, relying on PyAutoGUI's defaults.
+# pyautogui.FAILSAFE = True (default is True)
+# pyautogui.PAUSE = 0.1 (default is 0.1)
 
 def mouse_move(x: int, y: int, duration: float = 0.25) -> None:
     """
@@ -76,9 +66,7 @@ def mouse_drag(
         button: The mouse button to hold down during the drag ('left', 'middle', 'right'). Defaults to 'left'.
     """
     try:
-        pyautogui.moveTo(
-            start_x, start_y, duration=0.1
-        )  # Move to start position quickly
+        pyautogui.moveTo(start_x, start_y, duration=0.05) # Quick move to start
         pyautogui.dragTo(end_x, end_y, duration=duration, button=button)
     except Exception as e:
         print(f"Error dragging mouse: {e}")
@@ -102,54 +90,26 @@ def mouse_scroll(amount: int, x: int = None, y: int = None) -> None:
 
 
 if __name__ == "__main__":
-    # Example usage (BE VERY CAREFUL - this will move and click your mouse)
-    # It's recommended to have a way to quickly stop scripts (e.g., move mouse to a corner for pyautogui.FAILSAFE)
-    pyautogui.FAILSAFE = True  # Move mouse to top-left corner to stop
+    pyautogui.FAILSAFE = True
 
     try:
         current_x, current_y = pyautogui.position()
         print(f"Current mouse position: {current_x}, {current_y}")
+        print("To test mouse functions, uncomment them below and ensure a safe context.")
 
-        # Test move (move to 100,100 relative to current for safety, then back)
-        # target_x, target_y = current_x + 100, current_y + 100
-        # print(f"Moving mouse to {target_x},{target_y} and back...")
-        # mouse_move(target_x, target_y, duration=0.5)
+        # print("Testing move (to current_x + 50, current_y + 50) in 3s...")
+        # pyautogui.sleep(3)
+        # mouse_move(current_x + 50, current_y + 50, duration=0.5)
+        # pyautogui.sleep(1)
         # mouse_move(current_x, current_y, duration=0.5)
         # print("Move test complete.")
 
-        # Test click (at current position - ensure a safe spot is selected before running)
-        # print("Clicking left mouse button at current position in 3 seconds...")
+        # print("Testing click (left button at current position) in 3s...")
         # pyautogui.sleep(3)
         # mouse_click()
         # print("Click test complete.")
 
-        # Test scroll (scroll down by 10 units)
-        # print("Scrolling down by 10 units in 3 seconds...")
-        # pyautogui.sleep(3)
-        # mouse_scroll(-10) # Negative for down
-        # print("Scroll test complete.")
-
-        # Test drag (draw a small square - ensure a safe spot for dragging)
-        # print("Preparing to drag in 3 seconds... (drawing a small square)")
-        # pyautogui.sleep(3)
-        # drag_start_x, drag_start_y = pyautogui.position()
-        # print(f"Drag start: {drag_start_x}, {drag_start_y}")
-        # mouse_drag(drag_start_x, drag_start_y, drag_start_x + 50, drag_start_y, duration=0.5)
-        # mouse_drag(drag_start_x + 50, drag_start_y, drag_start_x + 50, drag_start_y + 50, duration=0.5)
-        # mouse_drag(drag_start_x + 50, drag_start_y + 50, drag_start_x, drag_start_y + 50, duration=0.5)
-        # mouse_drag(drag_start_x, drag_start_y + 50, drag_start_x, drag_start_y, duration=0.5)
-        # print("Drag test complete.")
-
-        print(
-            "Example usage section complete. Most actions are commented out for safety."
-        )
-        print(
-            "To test, uncomment specific actions and ensure pyautogui.FAILSAFE is True."
-        )
-
     except pyautogui.FailSafeException:
-        print(
-            "PyAutoGUI FAILSAFE triggered (mouse moved to a corner). Script terminated."
-        )
+        print("PyAutoGUI FAILSAFE triggered. Script terminated.")
     except Exception as e:
         print(f"An error occurred during example usage: {e}")
