@@ -8,6 +8,8 @@ Pillow
 requests
 pytesseract
 pandas
+transformers
+torch
 openai-whisper
 sounddevice
 scipy
