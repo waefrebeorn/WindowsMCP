@@ -181,13 +181,13 @@ class ZonosVoice(BaseTTSEngine):
 
             # Check for SUCCESS message from zonos_docker_entry.py
             if "SUCCESS" not in process.stdout and "SUCCESS" not in process.stderr:
-                 print(f"ERROR: ZonosVoice - Docker script did not signal success.")
-                 print(f"----- Docker STDOUT -----\n{process.stdout}")
-                 print(f"----- Docker STDERR -----\n{process.stderr}")
-                 # Fall through to check if file exists anyway, but log this.
+                print(f"ERROR: ZonosVoice - Docker script did not signal success or may have failed silently before 'SUCCESS'.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None # If SUCCESS not found, assume failure to produce valid output.
             else:
-                print(f"ZonosVoice: Docker container executed successfully.")
-                # print(f"Docker stdout: {process.stdout}") # For debugging
+                print(f"ZonosVoice: Docker container executed successfully and signalled SUCCESS.")
+                # Optional: print(f"Docker stdout: {process.stdout}") for debugging success cases too
 
             # 5. Read the output WAV file
             if os.path.exists(host_output_wav_file):
