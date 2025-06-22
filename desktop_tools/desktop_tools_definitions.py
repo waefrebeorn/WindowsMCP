@@ -534,6 +534,7 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 required=["url"],
             ),
         ),
+
         # --- Code Editor Tool (Phase 2) ---
         types.FunctionDeclaration(
             name="show_code_in_editor",
@@ -562,6 +563,7 @@ DESKTOP_TOOLS_INSTANCE = types.Tool(
                 required=["code_text", "line_number"],
             ),
         ),
+
     ]
 )
 

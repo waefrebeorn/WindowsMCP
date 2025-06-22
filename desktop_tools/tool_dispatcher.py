@@ -493,6 +493,7 @@ class DesktopToolDispatcher:
 
             # --- End of Basic Web Interaction Tool Dispatching ---
 
+
             # --- Code Editor Tool Dispatching (Phase 2) ---
             elif tool_name == "show_code_in_editor":
                 code_content = tool_args.get("code_content")
@@ -546,6 +547,7 @@ class DesktopToolDispatcher:
                         line_number_int,
                         column_number_int
                     )
+
             else:
                 output_data = {
                     "error_type": "ToolNotFound",
