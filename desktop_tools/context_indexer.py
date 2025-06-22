@@ -8,6 +8,7 @@ import fnmatch
 # Assuming config_manager is accessible. For now, we'll simulate its behavior for the new flag.
 # from config_manager import config
 
+
 class FileNode:
     """Represents a file with its path and hash."""
     def __init__(self, path: Path, hash_value: str):
@@ -58,6 +59,7 @@ class ContextIndexer:
         self.merkle_root: Optional[MerkleNode] = None
         self.file_hashes: Dict[Path, str] = {} # Stores individual file hashes path -> hash
         self.ignore_patterns: List[str] = []
+
         self.WUBU_IGNORE_FILE = ".wubuignore"
 
         # Simulate config access for the new flag
@@ -164,6 +166,7 @@ class ContextIndexer:
         except Exception as e:
             print(f"[Indexer] Error during Windows Search Index query: {e}")
             return None
+
 
     def _load_ignore_patterns(self):
         """Loads patterns from .gitignore and .wubuignore files."""
@@ -309,6 +312,7 @@ class ContextIndexer:
 
         # print(f"[Indexer] Processed: {processed_count}, Ignored: {ignored_count}, Total from source: {len(collected_file_paths)}")
         print(f"[Indexer] After filtering ignored files: {len(file_nodes)} files to be included in Merkle tree.")
+
 
         # Sort file_nodes by path to ensure consistent tree structure
         file_nodes.sort(key=lambda fn: fn.path)

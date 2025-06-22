@@ -1,5 +1,6 @@
 # WuBu: Your Desktop AI Assistant
 
+
 **WuBu** is a Python-based AI assistant designed to understand your commands and interact with your Windows desktop environment. It leverages Large Language Models (LLMs like Google's Gemini or local models via Ollama) for natural language understanding and task execution. WuBu uses dedicated libraries for screen interaction, OCR, vision analysis, voice control, system interaction, and more.
 
 ## Features
@@ -10,6 +11,7 @@
     *   OCR (Optical Character Recognition) using Tesseract to find text and its coordinates on screen.
     *   Click on text found via OCR.
 *   **Vision Analysis**: Utilizes Moondream v2 (or a similar vision model if configured) for general image description tasks.
+
 *   **Window Management**: List open windows, get active window title, focus windows, get window geometry, and control active window (minimize, maximize, restore, close).
 *   **Application Management**: Launch and close applications.
 *   **System Monitoring**: Query system information like CPU usage, memory, disk space, and battery status.
@@ -164,3 +166,4 @@ WuBu has access to a variety of tools to interact with your system:
 ---
 *Several batch scripts (`.bat`) are provided in the repository for common tasks like initial setup (`ollama_setup.bat`, `setup_venv.bat`) and running WuBu (`run_wubu.bat`, `run_ollama_wubu.bat`). While `python main.py` with arguments is the primary way to run WuBu, these scripts can simplify the process.*
 *Please review the batch scripts for any warnings, especially if you intend for WuBu to perform file system modifications.*
+
