@@ -1,6 +1,6 @@
-# Desktop AI Assistant (Windows MCP Agent)
+# WuBu: Your Desktop AI Assistant
 
-This project is a Python-based agent designed to control a Windows desktop environment. It leverages Large Language Models (LLMs like Google's Gemini or local models via Ollama) for understanding user commands. It uses dedicated libraries for screen interaction, OCR (via Tesseract and potentially Moondream v2 for general vision), Speech-to-Text (via Whisper), and Text-to-Speech (via pyttsx3). Users can interact with the assistant via a command-line interface (text or voice) to automate desktop tasks.
+**WuBu** is a Python-based AI assistant designed to understand your commands and interact with your Windows desktop environment. It leverages Large Language Models (LLMs like Google's Gemini or local models via Ollama) for natural language understanding and task execution. WuBu uses dedicated libraries for screen interaction, OCR, vision analysis, voice control, and more.
 
 ## Features
 
@@ -11,10 +11,15 @@ This project is a Python-based agent designed to control a Windows desktop envir
     *   Click on text found via OCR.
 *   **Vision Analysis**: Utilizes Moondream v2 (or a similar vision model if configured) for general image description tasks.
 *   **Window Management**: List open windows, get active window title, focus windows, get window geometry.
-*   **File System (Read-Only)**: List directory contents and read text files.
+*   **File System (Read-Only Tools)**: Includes tools to list directory contents and read text files.
+*   **Contextual Codebase Understanding**:
+    *   **Codebase Indexing**: When WuBu starts, it indexes the files in the current working directory (where you run `python main.py`). It builds a Merkle tree of file hashes to efficiently track the state of your project. This helps WuBu understand the broader context of your work.
+    *   **Ignore Files**: Respects `.gitignore` and an additional `.wubuignore` file in the project root to exclude certain files/directories from indexing.
+    *   **@-Mentions for Files**: You can refer to specific files in your commands using `@` notation (e.g., "summarize @src/main.py"). WuBu will load the content of the mentioned file to provide more relevant responses.
 *   **Voice Interaction**:
-    *   Speech-to-Text (STT) using local Whisper models.
-    *   Text-to-Speech (TTS) using pyttsx3 for spoken responses.
+    *   **Activation Phrases**: Activate WuBu by saying "WuBu", "Hey WuBu", "Yo WuBu", "WooBoo", or "WuhBoo" followed by your command when using voice input mode (`--voice`).
+    *   Speech-to-Text (STT): Uses local Whisper models for accurate transcription.
+    *   Text-to-Speech (TTS): Provides spoken responses using pyttsx3.
 *   **LLM Integration**: Supports Google Gemini (via API) and local LLMs (e.g., Llama, Phi, Qwen) through Ollama for natural language understanding and tool orchestration.
 *   **Command-Line Interface**: Allows users to type commands or use voice to interact with their desktop.
 *   **Configurable**: Settings for API keys, model names, and behavior can be managed through `config.json` and `.env` files.
@@ -105,34 +110,52 @@ This project is a Python-based agent designed to control a Windows desktop envir
     *   `--test_file <filepath>`: Execute commands from a file.
 
 ### Interactive Mode
-Type commands or use voice (if `--voice` flag is used). For voice, the system will prompt you to speak.
+Type commands or use voice (if `--voice` flag is used).
+
+**Voice Interaction:**
+When using the `--voice` flag, activate WuBu by saying one of the activation phrases:
+*   "WuBu"
+*   "Hey WuBu"
+*   "Yo WuBu"
+*   "WooBoo"
+*   "WuhBoo"
+
+Follow the activation phrase with your command. For example: *"Hey WuBu, list all open windows."*
+If you only say the activation phrase (e.g., "WuBu"), it will prompt you to type your command.
+
+**Contextual Understanding with @-Mentions:**
+WuBu indexes the files in the directory where it's started (your current working directory when you run `python main.py`). You can refer to files in this indexed project using `@` notation in your commands. This allows WuBu to load the content of that file and use it as context for your query. The file mentioned with `@` will also become the "current file" for subsequent commands until another file is mentioned.
 
 Examples:
 *   "List all open windows."
 *   "What is the title of the active window?"
 *   "Focus the window titled 'Notepad'." (Ensure Notepad is open)
-*   "Read the first 100 characters of requirements.txt."
+*   (In a project with `requirements.txt`) *"Hey WuBu, what are the main dependencies in @requirements.txt?"*
+*   (In a Python project) *"WuBu, can you explain the purpose of the main function in @src/app.py?"*
+*   After the previous command: *"WuBu, what other functions are in the current file?"* (WuBu will know "current file" is `src/app.py`)
 *   "Capture the screen and tell me what text you see near the top." (Uses screenshot + Moondream)
 *   "Find the text 'File' on screen and click it." (Uses screenshot + Tesseract OCR)
+
+**Note on Project Context:** The project context (indexed files) is determined by the directory you are in when you run `python main.py`. For best results, run WuBu from the root of the project you want it to be aware of. A `.wubuignore` file can be created in the project root, similar to `.gitignore`, to specify files or directories that WuBu should ignore during indexing.
 
 ## Available Tools (Examples)
 
 *   **Screen & Vision**: `capture_screen_region`, `capture_full_screen`, `get_screen_resolution`, `analyze_image_with_vision_model` (Moondream), `find_text_on_screen_and_click` (Tesseract).
 *   **Mouse & Keyboard**: `mouse_move`, `mouse_click`, `mouse_drag`, `mouse_scroll`, `keyboard_type`, `keyboard_press_key`, `keyboard_hotkey`.
 *   **Window Management**: `list_windows`, `get_active_window_title`, `focus_window`, `get_window_geometry`.
-*   **File System (Read-Only)**: `list_directory`, `read_text_file`.
+*   **File System (Read-Only)**: `list_directory`, `read_text_file`. Note: For code understanding, prefer using `@filename` syntax which provides richer context to WuBu.
 
 ## Example Workflow
 
-1.  **User (Voice/Text)**: "List all windows that have 'Editor' in their title."
-2.  **Agent (LLM Decision)**: Calls `list_windows` tool with `title_filter="Editor"`.
-3.  **Agent (Response to User - Text/TTS)**: "Found windows: [List of titles]."
-4.  **User**: "Focus the window '[Specific Editor Title]'."
-5.  **Agent**: Calls `focus_window` tool.
-6.  **Agent**: "Okay, I've attempted to focus '[Specific Editor Title]'."
-7.  **User**: "Type 'This is a test.' into the active window."
-8.  **Agent**: Calls `keyboard_type` tool.
-9.  **Agent**: "Done."
+1.  **User (Voice/Text)**: *"Hey WuBu, what functions are defined in @myproject/utils.py?"*
+2.  **WuBu (LLM Decision with Context)**: WuBu loads `myproject/utils.py` content. The LLM analyzes the file content provided in the context and identifies function definitions.
+3.  **WuBu (Response to User - Text/TTS)**: "In `@myproject/utils.py`, I found the following functions: `helper_function1`, `util_func2`."
+4.  **User**: *"WuBu, now focus the window 'Visual Studio Code'."*
+5.  **WuBu**: Calls `focus_window` tool.
+6.  **WuBu**: "Okay, I've attempted to focus 'Visual Studio Code'."
+7.  **User**: *"In the current file, refactor `helper_function1` to be more efficient."* (Assuming `myproject/utils.py` is still considered the "current file" due to the previous @-mention).
+8.  **WuBu (LLM Decision with Context)**: WuBu uses its knowledge of `helper_function1` from `myproject/utils.py` (which is the current file context) and suggests a refactoring, potentially by invoking a `replace_text_in_file` tool (if such a tool were implemented and available).
+9.  **WuBu**: "Okay, I can try to refactor it. Here's a suggestion..."
 
 ---
-*Several batch scripts (`.bat` files) are provided in the repository as convenient shortcuts for common tasks like initial setup (`ollama_setup.bat`, `setup_venv.bat`) and running the agent (`run_agent.bat`, `run_ollama_agent.bat`). While `python main.py` with appropriate arguments is the primary way to run the assistant, these scripts can simplify the process.*
+*Several batch scripts (`.bat` files) are provided in the repository as convenient shortcuts for common tasks like initial setup (`ollama_setup.bat`, `setup_venv.bat`) and running WuBu. (Consider renaming `run_agent.bat` to `run_wubu.bat` and `run_ollama_agent.bat` to `run_ollama_wubu.bat`). While `python main.py` with appropriate arguments is the primary way to run the assistant, these scripts can simplify the process.*
