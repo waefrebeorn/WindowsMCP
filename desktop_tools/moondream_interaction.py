@@ -1,226 +1,349 @@
-import requests
-import base64
 import io
-from PIL import Image
-import json
 import os
+import json
+import logging
+from PIL import Image
 
-# Attempt to import configuration, fallback if not found (e.g. during testing)
+try:
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+    import torch
+except ImportError:
+    print(
+        "Transformers or PyTorch not installed. Please install them: pip install transformers torch"
+    )
+    # Re-raise or handle as appropriate for your application's startup
+    raise
+
+# Attempt to import configuration, fallback if not found
 try:
     from config_manager import config as global_config
 except ImportError:
-    global_config = {}  # Fallback to empty dict if config_manager is not available
+    global_config = {}
 
-# --- Moondream Configuration ---
-# Prefer environment variable, then config file, then a default
-MOONDREAM_DEFAULT_API_URL = (
-    "http://localhost:8080/moondream"  # A common local moondream URL
-)
+logger = logging.getLogger(__name__)
 
 
-def get_moondream_api_url():
-    """Gets the Moondream API URL from env, config, or default."""
-    url = os.environ.get("MOONDREAM_API_URL")
-    if url:
-        return url
-    url = global_config.get("MOONDREAM_API_URL")
-    if url:
-        return url
-    return MOONDREAM_DEFAULT_API_URL
+class MoondreamV2:
+    """
+    Encapsulates the Moondream V2 model interaction using the Hugging Face transformers library.
+    """
 
+    def __init__(self, model_id: str = "vikhyatk/moondream2", revision: str = "2025-06-21"):
+        self.model_id = model_id
+        self.revision = revision
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Using device: {self.device} for MoondreamV2")
+
+        try:
+            self.model = AutoModelForCausalLM.from_pretrained(
+                self.model_id,
+                revision=self.revision,
+                trust_remote_code=True,
+                torch_dtype=torch.float16 if self.device == "cuda" else torch.float32, # float16 for GPU, float32 for CPU
+                # device_map="auto" # Let transformers handle device mapping if multiple GPUs or complex setups
+                # Using explicit .to(self.device) instead of device_map for simplicity with single device focus
+            ).to(self.device)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_id, revision=self.revision)
+            logger.info(f"MoondreamV2 model '{self.model_id}' (revision {self.revision}) loaded successfully.")
+        except Exception as e:
+            logger.error(f"Failed to load MoondreamV2 model '{self.model_id}': {e}", exc_info=True)
+            # Depending on application requirements, you might want to re-raise or handle this
+            # such that the application can continue without vision capabilities or exit gracefully.
+            self.model = None
+            self.tokenizer = None
+            raise # Re-raise for now, as vision is critical for this module's purpose
+
+    def _check_model_loaded(self):
+        if not self.model or not self.tokenizer:
+            # This state should ideally be prevented by __init__ raising an error.
+            # If it occurs, it's a critical issue.
+            raise RuntimeError("MoondreamV2 model is not loaded. Cannot perform operations.")
+
+    def caption(self, image: Image.Image, length: str = "normal", stream: bool = False) -> dict:
+        """
+        Generates a caption for the given image.
+
+        Args:
+            image: A PIL Image object.
+            length: "short" or "normal".
+            stream: Whether to stream the output (not fully handled in this wrapper, returns full).
+
+        Returns:
+            A dictionary containing the caption or an error.
+            Example: {"caption": "A description of the image."}
+                     {"error": "Details of the error."}
+        """
+        self._check_model_loaded()
+        if not isinstance(image, Image.Image):
+            return {"error": "Invalid image_input type. Must be a PIL.Image.Image object."}
+
+        try:
+            # Moondream's caption method itself returns a dict with 'caption'
+            # and handles streaming internally if stream=True (though this wrapper doesn't expose the stream directly)
+            if stream:
+                # The example shows iterating over model.caption(..., stream=True)['caption']
+                # For a non-streaming wrapper, we'd collect it.
+                # However, the model.caption itself returns the full dict.
+                # If we wanted to stream out, this function's signature and usage would need to change.
+                # For now, let's assume stream=False for simplicity of return type.
+                logger.warning("Streaming for caption is requested but this wrapper returns the full result.")
+
+            # The model.caption directly returns a dictionary like {'caption': 'text'}
+            # For stream=True, model.caption returns {'caption': <generator object ...>}
+            # Let's stick to the direct output of the model's method.
+            caption_result = self.model.caption(image, length=length, stream=stream, tokenizer=self.tokenizer)
+
+            if stream and 'caption' in caption_result and hasattr(caption_result['caption'], '__iter__'):
+                # Collect from stream if it's a generator
+                return {"caption": "".join([token for token in caption_result['caption']])}
+            elif 'caption' in caption_result:
+                 return {"caption": str(caption_result["caption"])} # Ensure it's a string
+            else:
+                return {"error": "Caption generation did not return expected 'caption' key."}
+
+        except Exception as e:
+            logger.error(f"Error during MoondreamV2 captioning: {e}", exc_info=True)
+            return {"error": f"Captioning failed: {e}"}
+
+    def query(self, image: Image.Image, question: str) -> dict:
+        """
+        Answers a question about the given image.
+
+        Args:
+            image: A PIL Image object.
+            question: The question to ask about the image.
+
+        Returns:
+            A dictionary containing the answer or an error.
+            Example: {"answer": "The answer to the question."}
+                     {"error": "Details of the error."}
+        """
+        self._check_model_loaded()
+        if not isinstance(image, Image.Image):
+            return {"error": "Invalid image_input type. Must be a PIL.Image.Image object."}
+        if not isinstance(question, str) or not question.strip():
+            return {"error": "Question must be a non-empty string."}
+
+        try:
+            # The model.query directly returns a dictionary like {'answer': 'text'}
+            query_result = self.model.query(image, question, tokenizer=self.tokenizer)
+            if 'answer' in query_result:
+                return {"answer": str(query_result["answer"])} # Ensure it's string
+            else:
+                return {"error": "Query processing did not return expected 'answer' key."}
+        except Exception as e:
+            logger.error(f"Error during MoondreamV2 query: {e}", exc_info=True)
+            return {"error": f"Query failed: {e}"}
+
+    def detect(self, image: Image.Image, object_name: str) -> dict:
+        """
+        Detects objects of a given name in the image.
+
+        Args:
+            image: A PIL Image object.
+            object_name: The name of the object to detect (e.g., "face").
+
+        Returns:
+            A dictionary containing the detected objects or an error.
+            Example: {"objects": [{"box": [x1, y1, x2, y2], "label": "face"}, ...]}
+                     {"error": "Details of the error."}
+        """
+        self._check_model_loaded()
+        # ... (implementation similar to query, using self.model.detect())
+        # The example shows: objects = model.detect(image, "face")["objects"]
+        try:
+            detection_result = self.model.detect(image, object_name, tokenizer=self.tokenizer)
+            if 'objects' in detection_result:
+                return {"objects": detection_result["objects"]}
+            else:
+                return {"error": "Detection did not return expected 'objects' key."}
+        except Exception as e:
+            logger.error(f"Error during MoondreamV2 detect: {e}", exc_info=True)
+            return {"error": f"Detection failed: {e}"}
+
+
+    def point(self, image: Image.Image, object_name: str) -> dict:
+        """
+        Identifies points for a given object name in the image.
+
+        Args:
+            image: A PIL Image object.
+            object_name: The name of the object to point to (e.g., "person").
+
+        Returns:
+            A dictionary containing the points or an error.
+            Example: {"points": [[x1, y1], [x2, y2], ...]}
+                     {"error": "Details of the error."}
+        """
+        self._check_model_loaded()
+        # ... (implementation similar to query, using self.model.point())
+        # The example shows: points = model.point(image, "person")["points"]
+        try:
+            pointing_result = self.model.point(image, object_name, tokenizer=self.tokenizer)
+            if 'points' in pointing_result:
+                return {"points": pointing_result["points"]}
+            else:
+                return {"error": "Pointing did not return expected 'points' key."}
+
+        except Exception as e:
+            logger.error(f"Error during MoondreamV2 point: {e}", exc_info=True)
+            return {"error": f"Pointing failed: {e}"}
+
+# --- Global Moondream Analyzer Instance ---
+# Initialize this once, as model loading can be slow.
+# Handle potential errors during initialization gracefully.
+moondream_analyzer = None
+try:
+    # Check if MOONDREAM_V2_ENABLED is explicitly set to false in config
+    # Default to True if not specified or if config is missing
+    moondream_enabled = global_config.get("MOONDREAM_V2_ENABLED", True)
+    if str(moondream_enabled).lower() == 'true':
+        logger.info("MOONDREAM_V2_ENABLED is true. Initializing MoondreamV2 analyzer...")
+        moondream_analyzer = MoondreamV2()
+    else:
+        logger.info("MOONDREAM_V2_ENABLED is false. MoondreamV2 analyzer will not be initialized.")
+except Exception as e:
+    logger.error(f"Failed to initialize global MoondreamV2 analyzer: {e}", exc_info=True)
+    # Application might still run but vision capabilities will be missing.
 
 def analyze_image_with_moondream(
     image_input: str | Image.Image, prompt_text: str
 ) -> dict:
     """
-    Sends an image and a text prompt to the Moondream v2 API and returns the response.
+    Analyzes an image using the globally initialized MoondreamV2 model by asking a question (prompt_text).
+    This function primarily uses the query capability of MoondreamV2.
 
     Args:
         image_input: Path to the image file (str) or a PIL Image object.
-        prompt_text: The text prompt to send with the image.
+        prompt_text: The text prompt/question to ask about the image.
+                     For OCR, use prompts like "Transcribe the text."
 
     Returns:
-        A dictionary containing the parsed JSON response from the Moondream API.
-        Returns a dictionary with an 'error' key in case of failure.
+        A dictionary containing the parsed response from MoondreamV2 (usually the answer to the prompt)
+        or an error dictionary.
+        Example: {"status": "success", "data": {"text": "The transcribed text..."}}
+                 {"error": "Details of the error."}
     """
-    api_url = get_moondream_api_url()
-    if not api_url:
-        return {"error": "MOONDREAM_API_URL is not configured."}
+    if not moondream_analyzer:
+        return {"error": "MoondreamV2 analyzer is not initialized or failed to load."}
+    if not moondream_analyzer.model: # Double check if model loaded within analyzer
+         return {"error": "MoondreamV2 model within analyzer is not available."}
 
-    image_bytes = None
-
+    pil_image = None
     try:
         if isinstance(image_input, str):  # Path to image file
-            with open(image_input, "rb") as f:
-                image_bytes = f.read()
-            # files = {'image': (os.path.basename(image_input), image_bytes)}
+            if not os.path.exists(image_input):
+                return {"error": f"Image file not found at path: {image_input}"}
+            pil_image = Image.open(image_input)
         elif isinstance(image_input, Image.Image):  # PIL Image object
-            buffer = io.BytesIO()
-            # Ensure image is in a common format like PNG or JPEG for sending
-            format_to_save = (
-                image_input.format if image_input.format in ["JPEG", "PNG"] else "PNG"
-            )
-            image_input.save(buffer, format=format_to_save)
-            image_bytes = buffer.getvalue()
-            # files = {'image': ('image.png', image_bytes, 'image/png')}
+            pil_image = image_input
         else:
             return {
                 "error": "Invalid image_input type. Must be a file path (str) or PIL.Image.Image object."
             }
 
-        if not image_bytes:
-            return {"error": "Failed to read or convert image to bytes."}
+        if not pil_image: # Should not happen if logic above is correct
+            return {"error": "Failed to load image."}
 
-        # Moondream (ollama version) expects base64 encoded image in the 'images' list
-        # and the prompt as 'prompt'.
-        # The official moondream repo might have a different API structure if run standalone.
-        # This implementation targets an Ollama-like/common local server structure.
-        payload = {
-            "model": global_config.get(
-                "OLLAMA_MOONDREAM_MODEL", "moondream"
-            ),  # Or however your specific moondream model is named in Ollama
-            "prompt": prompt_text,
-            "images": [base64.b64encode(image_bytes).decode("utf-8")],
-            # "stream": False # Optional, depending on API
-        }
+        # Use the query method of the MoondreamV2 class instance
+        result = moondream_analyzer.query(pil_image, prompt_text)
 
-        # Adjust headers if needed, e.g., for specific content types or auth
-        headers = {"Content-Type": "application/json"}
-
-        # Check if the target URL is an Ollama endpoint for /api/generate or /api/chat
-        # This is a common way to run moondream locally.
-        is_ollama_endpoint = "ollama" in api_url and (
-            "/api/generate" in api_url or "/api/chat" in api_url
-        )
-
-        if not is_ollama_endpoint and (
-            "ollama" in api_url.lower() or "11434" in api_url
-        ):
-            # If it looks like an ollama base URL but not a specific endpoint, try /api/generate
-            logger.warning( # This was the F821, should be logger.warning
-                f"MOONDREAM_API_URL '{api_url}' looks like an Ollama base URL. Appending '/api/generate'."
-            )
-            api_url = api_url.rstrip("/") + "/api/generate"
-
-        response = requests.post(
-            api_url, headers=headers, data=json.dumps(payload), timeout=60
-        )
-        response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
-        logger.debug(f"Raw Moondream API response text: {response.text}")
-
-        # Assuming the response is JSON. For Ollama, the actual text is in response.json()['response']
-        response_json = response.json()
-
-        if is_ollama_endpoint:  # Or check response structure
-            # Example for Ollama /api/generate:
-            # { "model": "moondream:latest", "created_at": "...", "response": "The OCR text or description", "done": true, ... }
-            # For /api/chat (if moondream supports it):
-            # { "message": { "role": "assistant", "content": "The OCR text..." }, ... }
-            if "response" in response_json:  # /api/generate style
-                return {
-                    "status": "success",
-                    "data": {
-                        "text": response_json["response"].strip(),
-                        "raw_response": response_json,
-                    },
-                }
-            elif (
-                "message" in response_json and "content" in response_json["message"]
-            ):  # /api/chat style
-                return {
-                    "status": "success",
-                    "data": {
-                        "text": response_json["message"]["content"].strip(),
-                        "raw_response": response_json,
-                    },
-                }
-            else:
-                # Fallback if structure is unexpected but request succeeded
-                return {"status": "success_unknown_format", "data": response_json}
+        if "error" in result:
+            return result # Propagate error from the query method
+        elif "answer" in result:
+            # Standardize the output format slightly to be more like the old API's success case
+            return {"status": "success", "data": {"text": result["answer"], "raw_response": result}}
         else:
-            # For a non-Ollama specific Moondream endpoint, the response structure might be different.
-            # This is a placeholder.
-            return {"status": "success", "data": response_json}
+            # This case should ideally be handled by the query method returning an error
+            return {"error": "MoondreamV2 query returned an unexpected result structure.", "raw_response": result}
 
-    except requests.exceptions.RequestException as e:
-        return {"error": f"API request failed: {e}"}
-    except FileNotFoundError:
+    except FileNotFoundError: # Should be caught by os.path.exists earlier
         return {"error": f"Image file not found at path: {image_input}"}
     except Exception as e:
+        logger.error(f"An unexpected error occurred in analyze_image_with_moondream: {e}", exc_info=True)
         return {"error": f"An unexpected error occurred: {e}"}
 
 
 if __name__ == "__main__":
-    print("Moondream Interaction Module Example")
-    # This example assumes you have a Moondream server running at the configured URL.
-    # And an image file named 'test_image.png' in the same directory as this script.
+    # Configure basic logging for the example
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info("Moondream Interaction Module Example (Transformers-based)")
 
-    # Create a dummy config for testing if config_manager is not available
-    if not global_config:
-        print(
-            "Using dummy config for MOONDREAM_API_URL as config_manager was not imported."
-        )
-        # You might need to set MOONDREAM_API_URL environment variable or update MOONDREAM_DEFAULT_API_URL
-        # For Ollama, it's typically http://localhost:11434/api/generate or /api/chat
-        # global_config["MOONDREAM_API_URL"] = "http://localhost:11434/api/generate"
-        # global_config["OLLAMA_MOONDREAM_MODEL"] = "moondream" # ensure this model is pulled in Ollama
+    if not moondream_analyzer:
+        logger.error("Global moondream_analyzer instance is not available. Example cannot run.")
+        exit(1)
+    if not moondream_analyzer.model:
+        logger.error("Moondream model within analyzer is not loaded. Example cannot run.")
+        exit(1)
 
-    api_url_to_test = get_moondream_api_url()
-    print(f"Attempting to use Moondream API URL: {api_url_to_test}")
-
-    # 1. Create a dummy image file for testing
+    # 1. Create a dummy image for testing
+    test_image_path = "test_image_moondream_transformers.png"
     try:
-        from PIL import Image, ImageDraw, ImageFont
+        from PIL import ImageDraw, ImageFont
 
-        img = Image.new("RGB", (400, 100), color=(255, 255, 255))
+        img = Image.new("RGB", (600, 150), color=(200, 200, 255))
         d = ImageDraw.Draw(img)
         try:
             font = ImageFont.truetype("arial.ttf", 40)
         except IOError:
             font = ImageFont.load_default()
-        d.text((10, 10), "Hello Moondream", fill=(0, 0, 0), font=font)
-        img.save("test_image_moondream.png")
-        print("Created a dummy image 'test_image_moondream.png' for testing.")
-        image_path_for_test = "test_image_moondream.png"
+        d.text((10, 10), "Hello Moondream V2!", fill=(0, 0, 0), font=font)
+        d.text((10, 70), "Transcribe this text.", fill=(50, 50, 50), font=font)
+        img.save(test_image_path)
+        logger.info(f"Created a dummy image '{test_image_path}' for testing.")
 
-        # Test with image path
-        prompt1 = "What does this image say?"
-        print(
-            f"\nTesting with image path: '{image_path_for_test}' and prompt: '{prompt1}'"
-        )
-        result1 = analyze_image_with_moondream(image_path_for_test, prompt1)
-        print("Response from Moondream (path input):")
-        print(json.dumps(result1, indent=2))
+        # Test with image path for general query
+        prompt1 = "What is written in the image?"
+        logger.info(f"\nTesting query with image path: '{test_image_path}' and prompt: '{prompt1}'")
+        result1 = analyze_image_with_moondream(test_image_path, prompt1)
+        logger.info("Response from Moondream (path input, query):")
+        logger.info(json.dumps(result1, indent=2))
 
-        # Test with PIL Image object
-        pil_image = Image.open(image_path_for_test)
-        prompt2 = "Describe this image."
-        print(f"\nTesting with PIL Image object and prompt: '{prompt2}'")
-        result2 = analyze_image_with_moondream(pil_image, prompt2)
-        print("Response from Moondream (PIL input):")
-        print(json.dumps(result2, indent=2))
+        # Test with PIL Image object for OCR-like query
+        pil_image = Image.open(test_image_path)
+        prompt_ocr = "Transcribe the text in natural reading order."
+        logger.info(f"\nTesting query with PIL Image object and OCR prompt: '{prompt_ocr}'")
+        result_ocr = analyze_image_with_moondream(pil_image, prompt_ocr)
+        logger.info("Response from Moondream (PIL input, OCR query):")
+        logger.info(json.dumps(result_ocr, indent=2))
+        if result_ocr.get("status") == "success":
+            logger.info(f"Extracted text for OCR: {result_ocr['data']['text']}")
+
+
+        # Test captioning
+        logger.info(f"\nTesting captioning with PIL Image object:")
+        result_caption = moondream_analyzer.caption(pil_image, length="normal")
+        logger.info("Response from Moondream (PIL input, caption):")
+        logger.info(json.dumps(result_caption, indent=2))
+        if "caption" in result_caption:
+            logger.info(f"Generated caption: {result_caption['caption']}")
+
+        # Test detection (example)
+        logger.info(f"\nTesting detection with PIL Image object (detect 'text'):")
+        # Note: "text" might be a conceptual object. Moondream's detection capabilities
+        # might be more geared towards common objects like "cat", "dog", "car", "figure", "table" etc.
+        # For document layout, it supports "figure", "formula", "text" etc.
+        result_detect = moondream_analyzer.detect(pil_image, "text") # Example: try to detect "text" regions
+        logger.info("Response from Moondream (PIL input, detect 'text'):")
+        logger.info(json.dumps(result_detect, indent=2))
+        if "objects" in result_detect:
+            logger.info(f"Detected {len(result_detect['objects'])} 'text' object(s).")
+
 
     except ImportError:
-        print(
-            "Pillow (PIL) is not installed. Cannot create dummy image or test with PIL object."
-        )
-        print("Please install it: pip install Pillow")
+        logger.error("Pillow (PIL) is not fully available. Cannot create dummy image or test with PIL object.")
+    except RuntimeError as re:
+        logger.error(f"A runtime error occurred, possibly during model interaction: {re}", exc_info=True)
     except Exception as e:
-        print(f"An error occurred during the example run: {e}")
-        print(
-            "Ensure your Moondream (e.g., Ollama with Moondream model) server is running and accessible."
-        )
-        print(
-            f"Also check if the MOONDREAM_API_URL is correctly set (currently: {api_url_to_test})."
-        )
-        print(
-            f"If using Ollama, make sure you have pulled the moondream model (e.g., 'ollama pull moondream')."
-        )
+        logger.error(f"An error occurred during the example run: {e}", exc_info=True)
+        logger.error("Ensure you have 'transformers', 'torch', and 'Pillow' installed.")
+        logger.error("If using GPU, ensure CUDA is set up correctly.")
 
-    # Clean up dummy image
-    if os.path.exists("test_image_moondream.png"):
-        try:
-            os.remove("test_image_moondream.png")
-            print("\nCleaned up dummy image 'test_image_moondream.png'.")
-        except Exception as e:
-            print(f"Error cleaning up dummy image: {e}")
+    finally:
+        # Clean up dummy image
+        if os.path.exists(test_image_path):
+            try:
+                os.remove(test_image_path)
+                logger.info(f"\nCleaned up dummy image '{test_image_path}'.")
+            except Exception as e:
+                logger.error(f"Error cleaning up dummy image: {e}")

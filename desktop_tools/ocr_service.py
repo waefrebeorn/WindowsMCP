@@ -140,71 +140,158 @@ def get_text_and_bounding_boxes(
     return results
 
 
-if __name__ == "__main__":
-    # Example Usage:
-    # This requires Tesseract OCR to be installed and Pillow for image creation.
-    # And pandas for handling the DataFrame.
-    logging.basicConfig(level=logging.INFO)
-    logger.info("OCR Service Module Example")
+# --- Moondream v2 based OCR ---
+try:
+    from .moondream_interaction import analyze_image_with_moondream as analyze_with_moondream_v2
+    from .moondream_interaction import moondream_analyzer as global_moondream_analyzer
+    MOONDREAM_AVAILABLE = True
+    if global_moondream_analyzer is None or global_moondream_analyzer.model is None:
+        MOONDREAM_AVAILABLE = False
+        logger.info("Moondream analyzer or model not loaded; Moondream OCR will not be available.")
+except ImportError:
+    logger.warning(
+        "Could not import moondream_interaction. Moondream OCR will not be available."
+    )
+    MOONDREAM_AVAILABLE = False
+    global_moondream_analyzer = None # Ensure it's defined for checks later
+
+def get_text_with_moondream(image: Image.Image, prompt: Optional[str] = None) -> List[OCRData]:
+    """
+    Extracts text from an image using Moondream V2.
+    Moondream provides full text transcription rather than detailed bounding boxes per word/line.
+    This function returns a single OCRData item representing the full transcription.
+
+    Args:
+        image: A PIL.Image.Image object to process.
+        prompt: Optional custom prompt for Moondream. If None, a default OCR prompt is used.
+
+    Returns:
+        A list containing a single OCRData dictionary with the transcribed text,
+        or an empty list if OCR fails or no text is found. Bounding box information
+        will be for the whole image, and confidence will be placeholder -1.0.
+    """
+    if not MOONDREAM_AVAILABLE:
+        logger.warning("Moondream V2 is not available. Cannot perform OCR with Moondream.")
+        return []
+
+    ocr_prompt = prompt if prompt else "Transcribe the text in natural reading order."
+    logger.info(f"Performing OCR with MoondreamV2 using prompt: '{ocr_prompt}'")
 
     try:
-        from PIL import ImageDraw, ImageFont  #  Import for example only
+        # analyze_image_with_moondream expects image path or PIL.Image
+        # It returns a dict like:
+        # {"status": "success", "data": {"text": "...", "raw_response": ...}}
+        # or {"error": "..."}
+        result = analyze_with_moondream_v2(image, ocr_prompt)
 
-        # 1. Create a dummy image with text
-        img = Image.new("RGB", (500, 150), color=(255, 255, 255))
+        if result.get("status") == "success" and result.get("data") and "text" in result["data"]:
+            full_text = result["data"]["text"]
+            if full_text and full_text.strip():
+                # Moondream doesn't give detailed bounding boxes or confidence scores like Tesseract.
+                # We'll create a single OCRData entry for the whole image text.
+                # Level 1 (page), block 1, par 1, line 1, word 1
+                # Dimensions are for the entire image.
+                width, height = image.size
+                return [
+                    OCRData(
+                        level=1, # Page level
+                        page_num=1,
+                        block_num=1,
+                        par_num=1,
+                        line_num=1,
+                        word_num=1,
+                        left=0,
+                        top=0,
+                        width=width,
+                        height=height,
+                        conf=-1.0,  # Moondream doesn't provide per-word confidence
+                        text=full_text.strip(),
+                    )
+                ]
+            else:
+                logger.info("Moondream OCR returned empty text.")
+                return []
+        else:
+            error_message = result.get("error", "Unknown error from Moondream V2.")
+            logger.error(f"Moondream V2 OCR failed: {error_message}")
+            return []
+
+    except Exception as e:
+        logger.error(f"An unexpected error occurred during Moondream V2 OCR: {e}", exc_info=True)
+        return []
+
+
+if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logger.info("OCR Service Module Example")
+
+    # Create a dummy image with text
+    dummy_image_created = False
+    try:
+        from PIL import ImageDraw, ImageFont  # Import for example only
+        img = Image.new("RGB", (600, 200), color=(220, 220, 255))
         draw = ImageDraw.Draw(img)
         try:
-            # Try to use a common font, fallback to default
-            font = ImageFont.truetype("arial.ttf", size=40)
+            font = ImageFont.truetype("arial.ttf", size=30)
         except IOError:
             font = ImageFont.load_default()
 
         draw.text((10, 10), "Hello Tesseract!", fill=(0, 0, 0), font=font)
-        draw.text((30, 70), "OCR Test Line 2", fill=(50, 50, 50), font=font)
-
-        # Save it for inspection if needed
-        # img.save("ocr_test_image.png")
-        # logger.info("Created and saved 'ocr_test_image.png'")
-
-        # 2. Process the image
-        logger.info("Processing dummy image with Tesseract...")
-        ocr_results = get_text_and_bounding_boxes(img)
-
-        if ocr_results:
-            logger.info(f"Found {len(ocr_results)} text segments:")
-            for item in ocr_results:
-                # Log only word-level results for brevity in example (level 5)
-                if item["level"] == 5:
-                    logger.info(
-                        f"  Text: '{item['text']}', "
-                        f"Conf: {item['conf']:.2f}, "
-                        f"Box: (L:{item['left']}, T:{item['top']}, W:{item['width']}, H:{item['height']})"
-                    )
-        else:
-            logger.warning("No text segments found by OCR or an error occurred.")
-            logger.warning(
-                "Ensure Tesseract OCR is correctly installed and accessible in your system PATH."
-            )
-            logger.warning("On Windows, you might need to set tesseract_cmd, e.g.:")
-            logger.warning(
-                "pytesseract.pytesseract.tesseract_cmd = r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'"
-            )
-
-    except ImportError as ie:
-        if "ImageDraw" in str(ie) or "ImageFont" in str(ie):
-            logger.error(f"Pillow (PIL) is required for creating the test image: {ie}")
-        elif "pandas" in str(ie):
-            logger.error(
-                f"Pandas is required by this example for pytesseract.image_to_data: {ie}"
-            )
-        else:
-            logger.error(f"Import error: {ie}")
-    except pytesseract.TesseractNotFoundError:
-        # This specific error is also caught inside the function, but good to show here for direct testing.
-        logger.error(
-            "Tesseract is not installed or not in your PATH. "
-            "This example cannot run without it. "
-            "Please install Tesseract OCR: https://tesseract-ocr.github.io/tessdoc/Installation.html"
-        )
+        draw.text((30, 60), "This is line two for Tesseract.", fill=(50, 50, 50), font=font)
+        draw.text((10, 110), "Moondream, can you read this?", fill=(0, 0, 100), font=font)
+        draw.text((30, 150), "And this line for Moondream too.", fill=(0, 50, 100), font=font)
+        dummy_image_created = True
+        logger.info("Created a dummy image for testing.")
+    except ImportError:
+        logger.error("Pillow (PIL) for ImageDraw/ImageFont not available. Cannot create dummy image for full test.")
+        img = None # Ensure img is None if creation failed
     except Exception as e:
-        logger.error(f"An error occurred during the example: {e}", exc_info=True)
+        logger.error(f"Error creating dummy image: {e}")
+        img = None
+
+    if img:
+        # --- Test Tesseract OCR ---
+        logger.info("\n--- Testing Tesseract OCR ---")
+        try:
+            tesseract_ocr_results = get_text_and_bounding_boxes(img)
+            if tesseract_ocr_results:
+                logger.info(f"Tesseract found {len(tesseract_ocr_results)} text segments (words/phrases):")
+                for item in tesseract_ocr_results:
+                    if item["level"] == 5: # Word level
+                        logger.info(
+                            f"  Text: '{item['text']}', Conf: {item['conf']:.2f}, "
+                            f"Box: (L:{item['left']}, T:{item['top']}, W:{item['width']}, H:{item['height']})"
+                        )
+            else:
+                logger.warning("No text segments found by Tesseract OCR or an error occurred.")
+                logger.warning("Ensure Tesseract OCR is correctly installed and accessible.")
+        except pytesseract.TesseractNotFoundError:
+            logger.error("Tesseract is not installed or not in your PATH. Tesseract test cannot run.")
+        except Exception as e:
+            logger.error(f"An error occurred during Tesseract test: {e}", exc_info=True)
+
+        # --- Test Moondream v2 OCR ---
+        logger.info("\n--- Testing Moondream v2 OCR ---")
+        if MOONDREAM_AVAILABLE:
+            try:
+                moondream_ocr_results = get_text_with_moondream(img)
+                if moondream_ocr_results:
+                    logger.info(f"Moondream found {len(moondream_ocr_results)} text block(s):")
+                    for item in moondream_ocr_results:
+                        logger.info(f"  Full Text: '{item['text']}'")
+                        logger.info(f"  (Note: Bounding box is for the whole image, conf is placeholder for Moondream)")
+                else:
+                    logger.warning("No text found by Moondream v2 OCR or an error occurred.")
+            except Exception as e:
+                logger.error(f"An error occurred during Moondream test: {e}", exc_info=True)
+        else:
+            logger.warning("Moondream v2 is not available (likely not installed or configured). Skipping Moondream OCR test.")
+    else:
+        logger.warning("Dummy image not created. Skipping OCR tests.")
+
+    # General advice if things fail
+    if not dummy_image_created:
+         logger.info("To run full tests, ensure Pillow (for ImageDraw/Font) is installed.")
+    logger.info("\nFor Tesseract: Ensure Tesseract OCR is installed and in PATH (or TESSERACT_CMD_PATH in config).")
+    logger.info("For Moondream: Ensure 'transformers' and 'torch' are installed, and the model can be downloaded/loaded.")
+    logger.info("If using GPU for Moondream, ensure CUDA is set up correctly.")
