@@ -35,6 +35,24 @@ tts:
     # piper_model_filename: "en_US-standard-medium.onnx" # Example .onnx filename
     # piper_model_subdir: "kokoro_tts_models/piper_en_us_standard_medium" # Subdir in src/wubu/tts/
 
+  # Configuration for ZonosVoice (Docker-based, high-quality, voice cloning)
+  # Requires Docker Desktop to be installed and running.
+  # The `setup_venv.bat` script attempts to pull a default Zonos image.
+  zonos_voice_engine:
+    enabled: false # Set to true to enable Zonos TTS
+    language: "en"  # Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
+                    # These map to Zonos specific codes like "en-us", "ja-jp", etc.
+    zonos_docker_image: "zyphra/zonos-v0.1-transformer:latest" # Docker image to use for Zonos.
+    zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer" # Model name for the script inside Docker.
+                                                                 # Usually matches the model in the image.
+    device_in_container: "cpu"   # Instructs script inside Docker to use "cpu" or "cuda".
+                                 # If "cuda", WuBu attempts to pass GPU access to the container.
+                                 # Host Docker setup must support GPU passthrough.
+    # Optional: Host path to a .wav audio file for default speaker voice cloning.
+    # This file will be mounted into the Docker container during synthesis.
+    # Use forward slashes (/) or properly escaped backslashes (\\) for YAML paths.
+    default_reference_audio_path: "" # e.g., "C:/Users/YourUser/audio_samples/my_voice.wav" or "assets/voices/speaker1.wav"
+
   # Example for ElevenLabs (Cloud TTS - Not implemented in current files)
   # elevenlabs_voice:
   #   enabled: false

@@ -24,7 +24,10 @@
 *   **Voice Interaction**:
     *   **Activation Phrases**: Activate WuBu by saying "WuBu", "Hey WuBu", "Yo WuBu", "WooBoo", or "WuhBoo" followed by your command when using voice input mode (`--voice`).
     *   Speech-to-Text (STT): Uses local Whisper models for accurate transcription.
-    *   Text-to-Speech (TTS): Provides spoken responses using pyttsx3.
+    *   Text-to-Speech (TTS): Provides spoken responses using various engines:
+        *   Default: `pyttsx3` (basic, system-dependent voices).
+        *   Advanced: **Zonos TTS** (via Docker) for high-quality, clonable voices.
+        *   Other engines like GLaDOS-style and Kokoro are also available.
 *   **LLM Integration**: Supports Google Gemini (via API) and local LLMs (e.g., Llama, Phi, Qwen) through Ollama for natural language understanding and tool orchestration.
 *   **Command-Line Interface**: Allows users to type commands or use voice to interact with their desktop.
 *   **Configurable**: Settings for API keys, model names, and behavior can be managed through `config.json` and `.env` files.
@@ -42,6 +45,10 @@
     *   macOS: `brew install ffmpeg`
     *   Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH, or via Chocolatey: `choco install ffmpeg`
 *   **psutil**: (Required for System Monitoring tools) `pip install psutil` (this will be handled by `requirements.txt`).
+*   **Docker Desktop**: (Required for Zonos TTS)
+    *   Download and install Docker Desktop for Windows from [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
+    *   Ensure Docker Desktop is running after installation.
+    *   The `setup_venv.bat` script will check for Docker and attempt to pull a default Zonos image.
 
 ## Setup Instructions
 
@@ -63,7 +70,8 @@
     ```bash
     pip install -r requirements.txt
     ```
-    This installs all necessary Python packages including `pyautogui`, `Pillow`, `requests`, `pytesseract`, `pandas`, `openai-whisper`, `sounddevice`, `scipy`, `pyttsx3`, `PyGetWindow`, `PyWinCtl`, and `psutil`.
+    This installs all necessary Python packages for WuBu's core functionality and various features.
+    The `setup_venv.bat` script also includes checks for Docker (for Zonos TTS) and attempts to pull a default Zonos Docker image.
 
 4.  **Configuration**:
     *   **Copy Example Configuration**:
@@ -81,6 +89,39 @@
         ```
     *   **Ollama Setup (if using Ollama)**:
         (As before...)
+    *   **Text-to-Speech (TTS) Configuration (including Zonos via Docker)**:
+        WuBu supports multiple TTS engines. You can configure them in the `tts` section of your `config.json` (or `wubu_config.yaml`).
+        To enable Zonos TTS (which runs via Docker):
+        ```json
+        {
+          // ... other configurations ...
+          "tts": {
+            "default_voice": "zonos_engine_cloning_service", // Example: Make Zonos the default TTS engine
+            "zonos_voice_engine": {
+              "enabled": true,
+              "language": "en", // Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
+              "zonos_docker_image": "zyphra/zonos-v0.1-transformer:latest", // Docker image to use
+              "zonos_model_name_in_container": "Zyphra/Zonos-v0.1-transformer", // Model for the script inside Docker
+              "device_in_container": "cpu", // "cpu" or "cuda" (for GPU use inside Docker, requires host GPU passthrough)
+              "default_reference_audio_path": "path/to_your/host_reference_speaker.wav"
+              // Optional: Host path to a .wav file for default voice cloning.
+              // Use forward slashes (/) or escaped backslashes (\\\\) in JSON for paths.
+            },
+            // ... other TTS engine configurations ...
+            "wubu_glados_style_voice": { "enabled": false },
+            "wubu_kokoro_voice": { "enabled": false }
+          }
+          // ... other configurations ...
+        }
+        ```
+        **Zonos (Docker-based) Configuration Details**:
+        *   `enabled` (boolean): Set to `true` to enable Zonos.
+        *   `language` (string): Default language for Zonos (e.g., "en" maps to "en-us").
+        *   `zonos_docker_image` (string): The Zonos Docker image to use (e.g., `zyphra/zonos-v0.1-transformer:latest`). `setup_venv.bat` attempts to pull a default version of this.
+        *   `zonos_model_name_in_container` (string): The model name the script inside the Docker container will load (usually matches the image's default model, e.g., `Zyphra/Zonos-v0.1-transformer`).
+        *   `device_in_container` (string): Instructs the script inside Docker to use "cpu" or "cuda". If "cuda", WuBu will attempt to pass GPU access to the container. Your Docker setup must support GPU passthrough.
+        *   `default_reference_audio_path` (string, optional): Path on your *host machine* to a `.wav` audio file for the default speaker voice. This file will be mounted into the Docker container during synthesis.
+        *   **Important**: Ensure Docker Desktop is installed and running (see Prerequisites).
     *   **Microphone Access**: Ensure the application has permission to access your microphone for voice input.
 
 ## Running the Assistant
