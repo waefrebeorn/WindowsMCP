@@ -47,7 +47,7 @@ REM === Subroutines ===
     ECHO [!SCRIPT_NAME!] Checking for Docker (required for Zonos TTS)...
     SET "DOCKER_SETUP_SUCCESS=false" REM Flag to track overall Docker setup for Zonos
 
-    docker --version >NUL 2>NUL
+    docker.exe --version >NUL 2>NUL
     IF !ERRORLEVEL! NEQ 0 (
         ECHO [!SCRIPT_NAME!] WARNING: Docker command not found on system PATH.
         CALL :DockerInstallGuide
@@ -56,7 +56,7 @@ REM === Subroutines ===
         REM Do not EXIT /B here, proceed to build attempt
     ) ELSE (
         ECHO [!SCRIPT_NAME!] Docker command is accessible. Checking if Docker engine is responsive...
-        docker version >NUL 2>NUL
+        docker.exe version >NUL 2>NUL
         IF !ERRORLEVEL! NEQ 0 (
             ECHO [!SCRIPT_NAME!] WARNING: Docker command found, but Docker engine may not be responsive or `docker version` failed (Error Code: !ERRORLEVEL!).
             ECHO [!SCRIPT_NAME!] This script will attempt to build the Zonos image anyway.
@@ -142,7 +142,7 @@ EXIT /B 0
         EXIT /B 1
     )
 
-    docker build -t "!WUBU_ZONOS_IMAGE_TAG!" .
+    docker.exe build -t "!WUBU_ZONOS_IMAGE_TAG!" .
     SET "DOCKER_BUILD_ERRORLEVEL=!ERRORLEVEL!"
     POPD
     IF !DOCKER_BUILD_ERRORLEVEL! NEQ 0 (
