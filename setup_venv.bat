@@ -63,33 +63,36 @@ EXIT /B 0
 :CheckDocker
     ECHO.
     ECHO [!SCRIPT_NAME!] Checking for Docker (required for Zonos TTS)...
+    SET "DOCKER_SETUP_SUCCESS=false" REM Flag to track overall Docker setup for Zonos
+
     docker --version >NUL 2>NUL
-    IF !ERRORLEVEL! EQU 0 (
-        ECHO [!SCRIPT_NAME!] Docker command is accessible. Checking if Docker engine is responsive...
-        docker ps >NUL 2>NUL
-        IF !ERRORLEVEL! EQU 0 (
-            ECHO [!SCRIPT_NAME!] Docker engine is responsive.
-            SET "DOCKER_INSTALLED=true"
-            CALL :BuildZonosImageFromSource
-            IF !ERRORLEVEL! NEQ 0 (
-                ECHO [!SCRIPT_NAME!] ERROR: The Zonos Docker image preparation process failed. Zonos TTS may not function. (Error Code: !ERRORLEVEL!)
-            )
-        ) ELSE (
-            ECHO [!SCRIPT_NAME!] ERROR: Docker command found, but Docker engine is not responsive or `docker ps` failed. (Error Code: !ERRORLEVEL!)
-            ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is running correctly and has finished initializing.
-            SET "DOCKER_INSTALLED=false"
-            CALL :DockerInstallGuide
-            ECHO [!SCRIPT_NAME!] Please re-run this script after ensuring Docker Desktop is fully operational.
-        )
-    ) ELSE (
+    IF !ERRORLEVEL! NEQ 0 (
         ECHO [!SCRIPT_NAME!] WARNING: Docker command not found on system PATH.
-        SET "DOCKER_INSTALLED=false"
         CALL :DockerInstallGuide
         ECHO [!SCRIPT_NAME!] Please re-run this script after installing Docker and ensuring it's in PATH.
+        EXIT /B 0 REM Exit this subroutine, main script continues but DOCKER_SETUP_SUCCESS is false
     )
-    REM Do not EXIT /B from :CheckDocker directly, let main script decide or continue for other deps.
-    REM The errorlevel from CALL :BuildZonosImageFromSource will be implicitly returned if it exits.
-    REM If DockerInstallGuide is called, we expect the user to re-run.
+
+    ECHO [!SCRIPT_NAME!] Docker command is accessible. Checking if Docker engine is responsive...
+    docker ps >NUL 2>NUL
+    IF !ERRORLEVEL! NEQ 0 (
+        ECHO [!SCRIPT_NAME!] ERROR: Docker command found, but Docker engine is not responsive or `docker ps` failed. (Error Code: !ERRORLEVEL!)
+        ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is running correctly and has finished initializing.
+        CALL :DockerInstallGuide
+        ECHO [!SCRIPT_NAME!] Please re-run this script after ensuring Docker Desktop is fully operational.
+        EXIT /B 0 REM Exit this subroutine
+    )
+
+    ECHO [!SCRIPT_NAME!] Docker engine is responsive.
+    CALL :BuildZonosImageFromSource
+    IF !ERRORLEVEL! EQU 0 (
+        SET "DOCKER_SETUP_SUCCESS=true"
+    ) ELSE (
+        ECHO [!SCRIPT_NAME!] ERROR: The Zonos Docker image preparation process failed. Zonos TTS may not function. (Reported Error Code from build: !ERRORLEVEL!)
+        REM No need to call DockerInstallGuide here again if Docker itself was responsive. The error is specific to the build.
+    )
+    REM This subroutine's ERRORLEVEL is implicitly that of the last command (CALL or SET)
+    REM If BuildZonosImageFromSource fails, its non-zero ERRORLEVEL will propagate from the CALL.
 EXIT /B 0
 
 :DockerInstallGuide
@@ -128,32 +131,28 @@ EXIT /B 0
     ECHO [!SCRIPT_NAME!] This involves cloning the Zonos repository and running 'docker build'.
     ECHO [!SCRIPT_NAME!] This may take a significant amount of time and disk space.
 
-    REM Check if Zonos source directory exists
+    REM Clone Zonos repository if Zonos_src directory doesn't exist
     IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!" (
         ECHO [!SCRIPT_NAME!] Zonos source directory "!ZONOS_SRC_DIR!" not found. Cloning from !ZONOS_REPO_URL!...
-        git clone --depth 1 "!ZONOS_REPO_URL!" "!ZONOS_SRC_DIR!"
+        git clone "!ZONOS_REPO_URL!" "!ZONOS_SRC_DIR!"
         SET "GIT_CLONE_ERRORLEVEL=!ERRORLEVEL!"
         IF !GIT_CLONE_ERRORLEVEL! NEQ 0 (
             ECHO [!SCRIPT_NAME!] ERROR: Failed to clone Zonos repository from !ZONOS_REPO_URL!. (Error Code: !GIT_CLONE_ERRORLEVEL!)
             ECHO [!SCRIPT_NAME!] Please check your internet connection, Git installation, and repository URL. Zonos TTS cannot be set up.
             EXIT /B 1
         )
-        REM Additional check for directory and Dockerfile existence after successful ERRORLEVEL from git clone
-        IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!\Dockerfile" (
-            ECHO [!SCRIPT_NAME!] ERROR: Zonos repository cloned, but key file 'Dockerfile' is missing in "%~dp0!ZONOS_SRC_DIR!".
-            ECHO [!SCRIPT_NAME!] The repository structure might have changed or the clone was incomplete. Zonos TTS cannot be set up.
-            EXIT /B 1
-        )
         ECHO [!SCRIPT_NAME!] Zonos repository cloned successfully into "!ZONOS_SRC_DIR!".
     ) ELSE (
-        ECHO [!SCRIPT_NAME!] Zonos source directory "!ZONOS_SRC_DIR!" already exists. Skipping clone.
-        IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!\Dockerfile" (
-            ECHO [!SCRIPT_NAME!] WARNING: Zonos source directory "!ZONOS_SRC_DIR!" exists, but key file 'Dockerfile' is missing.
-            ECHO [!SCRIPT_NAME!] The existing directory might be corrupted or not a valid Zonos source.
-            ECHO [!SCRIPT_NAME!] Consider deleting this directory and re-running the script to ensure a clean clone.
-            ECHO [!SCRIPT_NAME!] Proceeding with build attempt, but it may fail.
-        )
-        ECHO [!SCRIPT_NAME!] To ensure you have the latest Zonos source for the Docker build, you may want to manually delete "!ZONOS_SRC_DIR!" and re-run this script.
+        ECHO [!SCRIPT_NAME!] Zonos source directory "!ZONOS_SRC_DIR!" already exists. Using existing directory.
+        ECHO [!SCRIPT_NAME!] To ensure you build with the latest Zonos source, you may want to manually delete "!ZONOS_SRC_DIR!" and re-run this script.
+    )
+
+    REM Verify Dockerfile exists in the Zonos source directory before attempting to build
+    IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!\Dockerfile" (
+        ECHO [!SCRIPT_NAME!] ERROR: 'Dockerfile' is missing in the Zonos source directory "%~dp0!ZONOS_SRC_DIR!".
+        ECHO [!SCRIPT_NAME!] Cannot build the Zonos Docker image. The Zonos repository might be corrupted or incomplete.
+        ECHO [!SCRIPT_NAME!] Try deleting the "%~dp0!ZONOS_SRC_DIR!" directory and re-running this script.
+        EXIT /B 1
     )
 
     ECHO [!SCRIPT_NAME!] Building Zonos Docker image (!WUBU_ZONOS_IMAGE_TAG!) from source in "!ZONOS_SRC_DIR!"...
