@@ -74,9 +74,9 @@ EXIT /B 0
     )
 
     ECHO [!SCRIPT_NAME!] Docker command is accessible. Checking if Docker engine is responsive...
-    docker ps >NUL 2>NUL
+    docker version >NUL 2>NUL
     IF !ERRORLEVEL! NEQ 0 (
-        ECHO [!SCRIPT_NAME!] ERROR: Docker command found, but Docker engine is not responsive or `docker ps` failed. (Error Code: !ERRORLEVEL!)
+        ECHO [!SCRIPT_NAME!] ERROR: Docker command found, but Docker engine is not responsive or `docker version` failed. (Error Code: !ERRORLEVEL!)
         ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is running correctly and has finished initializing.
         CALL :DockerInstallGuide
         ECHO [!SCRIPT_NAME!] Please re-run this script after ensuring Docker Desktop is fully operational.
