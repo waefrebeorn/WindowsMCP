@@ -4,6 +4,7 @@ target/
 .idea/
 .vs/
 output/
+Zonos_src/
 
 # Python virtual environment
 venv/
