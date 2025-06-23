@@ -5,7 +5,7 @@
 import json # Added for tool call argument/result processing
 from ..tts.tts_engine_manager import TTSEngineManager, ZONOS_ENGINE_ID # Import ZONOS_ENGINE_ID for use
 from ..asr.speech_listener import SpeechListener # Import SpeechListener
-from ..llm.llm_processor import LLMProcessor
+from .llm_processor import LLMProcessor # Corrected import
 from ..ui.wubu_ui import WubuApp # Actual class name for type hinting
 
 # Adjust path if desktop_tools is a top-level package or structured differently
