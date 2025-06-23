@@ -313,4 +313,3 @@ if __name__ == '__main__':
         print(f"\nGathering context for query: {context_ignored_query}")
         context_ignored = provider.gather_context(context_ignored_query)
         print(f"Referenced files for ignored query: {context_ignored['referenced_files']}") # Should be empty for data.log
-```

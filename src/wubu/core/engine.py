@@ -427,9 +427,9 @@ if __name__ == '__main__':
     engine.set_ui(mock_ui_instance)
     mock_ui_instance.start() # Start the mock UI
 
-    print("\n--- Test: Process Text Command (WuBu) ---")
-    engine.process_text_command("Hello, WuBu. How are you today?")
-    engine.process_text_command("What is the meaning of life, WuBu?")
+    print("\n--- Test: Process User Prompt (WuBu) ---")
+    engine.process_user_prompt("Hello, WuBu. How are you today?")
+    engine.process_user_prompt("What is the meaning of life, WuBu?")
 
     print("\n--- Test: Shutdown (WuBu) ---")
     engine.shutdown() # This will also stop the mock UI
