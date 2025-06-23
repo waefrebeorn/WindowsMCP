@@ -37,14 +37,14 @@ tts:
 
   # Configuration for ZonosVoice (Docker-based, high-quality, voice cloning)
   # Requires Docker Desktop to be installed and running.
-  # The `setup_venv.bat` script attempts to pull a default Zonos image.
+  # The `setup_venv.bat` script attempts to clone Zonos source and build 'wubu_zonos_image'.
   zonos_voice_engine:
     enabled: false # Set to true to enable Zonos TTS
     language: "en"  # Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
                     # These map to Zonos specific codes like "en-us", "ja-jp", etc.
-    zonos_docker_image: "zyphra/zonos-v0.1-transformer:latest" # Docker image to use for Zonos.
+    zonos_docker_image: "wubu_zonos_image" # Docker image to use for Zonos. This image is built by setup_venv.bat.
     zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer" # Model name for the script inside Docker.
-                                                                 # Usually matches the model in the image.
+                                                                 # This is the model Zonos library will load.
     device_in_container: "cpu"   # Instructs script inside Docker to use "cpu" or "cuda".
                                  # If "cuda", WuBu attempts to pass GPU access to the container.
                                  # Host Docker setup must support GPU passthrough.

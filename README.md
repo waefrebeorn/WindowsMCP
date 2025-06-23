@@ -47,8 +47,9 @@
 *   **psutil**: (Required for System Monitoring tools) `pip install psutil` (this will be handled by `requirements.txt`).
 *   **Docker Desktop**: (Required for Zonos TTS)
     *   Download and install Docker Desktop for Windows from [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
-    *   Ensure Docker Desktop is running after installation.
-    *   The `setup_venv.bat` script will check for Docker and attempt to pull a default Zonos image.
+    *   Ensure Docker Desktop is running after installation. **This is crucial before running `setup_venv.bat` for Zonos setup.**
+    *   The `setup_venv.bat` script will check for Docker. If found and running, it will attempt to clone the Zonos repository (if not already present in a `Zonos_src` subdirectory) and then build a local Docker image named `wubu_zonos_image` using Zonos's own Dockerfile. This image is then used by WuBu for Zonos TTS.
+
 
 ## Setup Instructions
 
@@ -71,7 +72,7 @@
     pip install -r requirements.txt
     ```
     This installs all necessary Python packages for WuBu's core functionality and various features.
-    The `setup_venv.bat` script also includes checks for Docker (for Zonos TTS) and attempts to pull a default Zonos Docker image.
+    The `setup_venv.bat` script also includes checks for Docker. If Docker is running, it will proceed to clone the Zonos source code (into `Zonos_src/`) and build the `wubu_zonos_image` Docker image locally. This process might take some time.
 
 4.  **Configuration**:
     *   **Copy Example Configuration**:
@@ -100,9 +101,9 @@
             "zonos_voice_engine": {
               "enabled": true,
               "language": "en", // Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
-              "zonos_docker_image": "zyphra/zonos-v0.1-transformer:latest", // Docker image to use
-              "zonos_model_name_in_container": "Zyphra/Zonos-v0.1-transformer", // Model for the script inside Docker
-              "device_in_container": "cpu", // "cpu" or "cuda" (for GPU use inside Docker, requires host GPU passthrough)
+              "zonos_docker_image": "wubu_zonos_image", // Docker image built locally by setup_venv.bat
+              "zonos_model_name_in_container": "Zyphra/Zonos-v0.1-transformer", // Model Zonos library loads inside container
+              "device_in_container": "cpu", // "cpu" or "cuda" (for GPU use inside Docker)
               "default_reference_audio_path": "path/to_your/host_reference_speaker.wav"
               // Optional: Host path to a .wav file for default voice cloning.
               // Use forward slashes (/) or escaped backslashes (\\\\) in JSON for paths.
@@ -117,11 +118,11 @@
         **Zonos (Docker-based) Configuration Details**:
         *   `enabled` (boolean): Set to `true` to enable Zonos.
         *   `language` (string): Default language for Zonos (e.g., "en" maps to "en-us").
-        *   `zonos_docker_image` (string): The Zonos Docker image to use (e.g., `zyphra/zonos-v0.1-transformer:latest`). `setup_venv.bat` attempts to pull a default version of this.
-        *   `zonos_model_name_in_container` (string): The model name the script inside the Docker container will load (usually matches the image's default model, e.g., `Zyphra/Zonos-v0.1-transformer`).
+        *   `zonos_docker_image` (string): Should be `"wubu_zonos_image"`. This is the name of the Docker image built locally by the `setup_venv.bat` script from the Zonos repository source.
+        *   `zonos_model_name_in_container` (string): The model name the script inside the Docker container will load using the Zonos library (e.g., `Zyphra/Zonos-v0.1-transformer`). This usually corresponds to a model available within the Zonos ecosystem.
         *   `device_in_container` (string): Instructs the script inside Docker to use "cpu" or "cuda". If "cuda", WuBu will attempt to pass GPU access to the container. Your Docker setup must support GPU passthrough.
         *   `default_reference_audio_path` (string, optional): Path on your *host machine* to a `.wav` audio file for the default speaker voice. This file will be mounted into the Docker container during synthesis.
-        *   **Important**: Ensure Docker Desktop is installed and running (see Prerequisites).
+        *   **Important**: Ensure Docker Desktop is installed and running *before* running `setup_venv.bat` to allow the Zonos image to be built.
     *   **Microphone Access**: Ensure the application has permission to access your microphone for voice input.
 
 ## Running the Assistant

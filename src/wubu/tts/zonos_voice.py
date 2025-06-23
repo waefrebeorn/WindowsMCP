@@ -27,7 +27,7 @@ LANGUAGE_MAP = {
 
 # Configuration keys expected from wubu_config.yaml for zonos_voice_engine section
 # These are examples, actual keys will be fetched from self.config
-DEFAULT_ZONOS_DOCKER_IMAGE = "zyphra/zonos-v0.1-transformer:latest" # Default image if not specified
+DEFAULT_ZONOS_DOCKER_IMAGE = "wubu_zonos_image" # Default image tag for the locally built image
 DEFAULT_ZONOS_MODEL_INSIDE_CONTAINER = "Zyphra/Zonos-v0.1-transformer" # Model name for zonos_docker_entry.py
 DEFAULT_DEVICE_INSIDE_CONTAINER = "cpu" # "cpu" or "cuda"
 
