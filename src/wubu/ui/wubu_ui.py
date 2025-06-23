@@ -309,36 +309,31 @@ class ZonosDashboardWindow(ctk.CTkToplevel):
 
         self.zonos_engine = zonos_engine_override
 
-        if not self.zonos_engine:
-            # Fallback direct initialization if no engine was passed (e.g. during development/testing)
-            # This path should ideally not be taken in the final integrated app.
-            print("ZonosDashboard: WARNING - Zonos engine not passed directly. Attempting direct init as fallback.")
-            from ..tts.zonos_voice import ZonosVoice
-            from ..tts.tts_engine_manager import ZONOS_ENGINE_ID # For config key
+        if not self.zonos_engine: # Only try fallback if override was None from WubuApp
+            print("ZonosDashboard: WARNING - Zonos engine not passed from main app. Attempting direct init as fallback.")
+            from ..tts.zonos_voice import ZonosVoice # Keep import local to fallback
 
-            # Try to get Zonos engine from main app's engine if master_app.engine exists and has tts_manager
-            # This is still a bit coupled, WubuEngine should ideally pass the specific engine.
-            if hasattr(self.master_app, 'engine') and self.master_app.engine and \
-               hasattr(self.master_app.engine, 'tts_manager') and self.master_app.engine.tts_manager:
-                 self.zonos_engine = self.master_app.engine.tts_manager.get_engine(ZONOS_ENGINE_ID)
-
-            if not self.zonos_engine: # If still not found, try full direct init
-                zonos_config_section = self.config.get('tts', {}).get('zonos_voice_engine', {})
-                if zonos_config_section.get('enabled', False):
-                    try:
-                        self.zonos_engine = ZonosVoice(
-                            language=zonos_config_section.get('language', 'en'),
-                            default_voice=zonos_config_section.get('default_reference_audio_path'),
-                            config=zonos_config_section
-                        )
-                        if not self.zonos_engine.zonos_model:
-                            self.zonos_engine = None
-                            print("ZonosDashboard: Fallback direct init of ZonosVoice failed to load model.")
-                    except Exception as e:
-                        print(f"ZonosDashboard: Error during fallback direct init of ZonosVoice: {e}")
-                        self.zonos_engine = None
-                else:
-                    print("ZonosDashboard: Zonos is not enabled in config for fallback direct init.")
+            zonos_config_section = self.config.get('tts', {}).get('zonos_voice_engine', {})
+            if zonos_config_section.get('enabled', False):
+                try:
+                    # Create a new ZonosVoice instance for the dashboard only
+                    fallback_engine = ZonosVoice(
+                        language=zonos_config_section.get('language', 'en'),
+                        default_voice=zonos_config_section.get('default_reference_audio_path'),
+                        config=zonos_config_section
+                    )
+                    # Check the correct attribute for Docker-based Zonos
+                    if hasattr(fallback_engine, 'is_docker_ok') and fallback_engine.is_docker_ok:
+                        self.zonos_engine = fallback_engine # Use this fallback instance
+                        print("ZonosDashboard: Fallback direct init of ZonosVoice successful.")
+                    else:
+                        print("ZonosDashboard: Fallback direct init of ZonosVoice failed (Docker not OK or instance issue).")
+                        self.zonos_engine = None # Ensure it's None if fallback fails
+                except Exception as e:
+                    print(f"ZonosDashboard: Error during fallback direct init of ZonosVoice: {e}")
+                    self.zonos_engine = None
+            else:
+                print("ZonosDashboard: Zonos is not enabled in config for fallback direct init (config section has enabled:false or missing).")
 
         if not self.zonos_engine:
             self.title("Zonos TTS (Engine Error)")
