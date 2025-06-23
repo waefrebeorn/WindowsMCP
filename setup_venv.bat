@@ -93,7 +93,6 @@ EXIT /B 0
     )
     REM This subroutine's ERRORLEVEL is implicitly that of the last command (CALL or SET)
     REM If BuildZonosImageFromSource fails, its non-zero ERRORLEVEL will propagate from the CALL.
-    REM If it succeeds, ERRORLEVEL from SET will be 0.
 EXIT /B 0
 
 :DockerInstallGuide
