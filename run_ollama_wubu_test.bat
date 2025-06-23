@@ -123,7 +123,6 @@ REM ============================================================================
 
 REM ----------------------------------------------------------------------------
 :ActivateVenv
-    SETLOCAL
     ECHO.
     ECHO [!SCRIPT_NAME!] Activating Python virtual environment...
     ECHO [!SCRIPT_NAME!] Venv path: "!VENV_ACTIVATION_SCRIPT!"
@@ -131,7 +130,6 @@ REM ----------------------------------------------------------------------------
     CALL "!VENV_ACTIVATION_SCRIPT!"
     IF "!ERRORLEVEL!" NEQ "0" (EXIT /B 1)
     ECHO [!SCRIPT_NAME!] Virtual environment seems activated.
-    ENDLOCAL
 EXIT /B 0
 
 REM ----------------------------------------------------------------------------
