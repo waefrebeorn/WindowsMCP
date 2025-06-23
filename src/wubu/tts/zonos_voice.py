@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import shutil
 import platform  # For platform-specific path conversions if needed
+import hashlib # For generating cache filenames
+import torch # For loading/saving tensors
 
 from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 
@@ -151,6 +153,9 @@ class ZonosVoice(BaseTTSEngine):
             # The --gpus flag is for the docker daemon.
             if self.device_in_container == "cuda":
                 docker_cmd.append("--gpus=all") # Request all available GPUs
+            elif self.device_in_container == "cpu":
+                # Ensure no GPUs are visible to PyTorch inside the container for robust CPU execution
+                docker_cmd.extend(["-e", "CUDA_VISIBLE_DEVICES=-1"])
 
             # Docker image
             docker_cmd.append(self.docker_image)
@@ -252,6 +257,173 @@ class ZonosVoice(BaseTTSEngine):
             print(f"WARNING: ZonosVoice - Default voice path '{voice_id}' does not exist on host. This might cause issues.")
             self.default_voice = voice_id # Set it anyway, errors will occur at synthesis time
             return False # Indicate that the voice path is not valid as per this check
+
+    def _get_embedding_cache_dir(self) -> str:
+        """Gets the directory for storing cached speaker embeddings."""
+        # Try to use a platform-specific app data directory
+        app_data_dir = None
+        if platform.system() == "Windows":
+            app_data_dir = os.getenv("LOCALAPPDATA")
+        elif platform.system() == "Darwin": # macOS
+            app_data_dir = os.path.expanduser("~/Library/Application Support")
+        else: # Linux and other UNIX-like
+            app_data_dir = os.getenv("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+
+        if app_data_dir:
+            cache_root = os.path.join(app_data_dir, "WuBu", "zonos_embeddings")
+        else:
+            # Fallback if system-specific path is not found (should be rare)
+            cache_root = os.path.join(os.path.expanduser("~"), ".wubu_cache", "zonos_embeddings")
+
+        os.makedirs(cache_root, exist_ok=True)
+        return cache_root
+
+    def _get_cached_embedding_path(self, reference_audio_path: str) -> str:
+        """Generates a unique cache file path for a given reference audio path."""
+        # Create a hash from the reference audio path to make a unique filename
+        # Using abspath to ensure consistency if relative paths are given
+        abs_ref_path = os.path.abspath(reference_audio_path)
+        hasher = hashlib.sha256(abs_ref_path.encode('utf-8'))
+        # Truncate hash for a shorter filename, still very likely to be unique
+        filename = f"embedding_{hasher.hexdigest()[:16]}.pt"
+        return os.path.join(self._get_embedding_cache_dir(), filename)
+
+    def _get_speaker_embedding(self, reference_audio_path: str) -> torch.Tensor | None:
+        """
+        Retrieves a speaker embedding for a given reference audio file.
+        Tries to load from cache first. If not found, generates it using Zonos Docker container,
+        saves it to cache, and then returns it.
+
+        Args:
+            reference_audio_path: Path to the reference audio file (.wav) on the host.
+
+        Returns:
+            A PyTorch tensor containing the speaker embedding, or None if generation/loading fails.
+        """
+        if not self.is_docker_ok:
+            print("ERROR: ZonosVoice - Docker is not available or not working. Cannot get/create speaker embedding.")
+            return None
+
+        if not os.path.exists(self.host_docker_entry_script_path):
+            print(f"ERROR: ZonosVoice - Docker entry script missing at {self.host_docker_entry_script_path}. Cannot get/create embedding.")
+            return None
+
+        if not os.path.exists(reference_audio_path):
+            print(f"ERROR: ZonosVoice - Host reference audio file not found: {reference_audio_path}")
+            return None
+
+        embedding_cache_path = self._get_cached_embedding_path(reference_audio_path)
+
+        # 1. Try to load from cache
+        if os.path.exists(embedding_cache_path):
+            try:
+                print(f"INFO: ZonosVoice - Loading speaker embedding from cache: {embedding_cache_path}")
+                # Determine map_location based on whether the model is intended for CPU or CUDA
+                # The embedding tensor itself is usually small and can be on CPU.
+                # However, if the main Zonos model runs on CUDA, it might expect CUDA tensors.
+                # For now, let's assume embeddings are fine on CPU or the device Zonos is configured for.
+                # The zonos_docker_entry.py saves it as a CPU tensor.
+                map_loc = 'cpu' # Load to CPU by default
+                if self.device_in_container == 'cuda':
+                    # If the container uses CUDA, it might be beneficial to load to CUDA if available on host,
+                    # but this class (ZonosVoice) runs on host, not in container.
+                    # For simplicity and robustness, always load to CPU first. Zonos model will move to device if needed.
+                    pass
+
+                embedding_tensor = torch.load(embedding_cache_path, map_location=map_loc)
+                print("INFO: ZonosVoice - Speaker embedding loaded successfully from cache.")
+                return embedding_tensor
+            except Exception as e:
+                print(f"ERROR: ZonosVoice - Failed to load embedding from cache '{embedding_cache_path}': {e}. Will attempt to regenerate.")
+                # Optionally, delete corrupted cache file: os.remove(embedding_cache_path)
+
+        # 2. If not in cache or loading failed, generate and save to cache
+        print(f"INFO: ZonosVoice - Speaker embedding not found in cache or failed to load. Generating new one for: {reference_audio_path}")
+
+        tmp_io_dir = None
+        try:
+            tmp_io_dir = tempfile.mkdtemp(prefix="wubu_zonos_embed_io_")
+
+            # Docker needs a consistent name for the reference audio inside its mount.
+            # Copying the ref audio to temp dir to avoid issues with complex paths/permissions.
+            temp_host_ref_audio_filename = "ref_for_embedding" + os.path.splitext(reference_audio_path)[1]
+            temp_host_ref_audio_path_in_tmp_io = os.path.join(tmp_io_dir, temp_host_ref_audio_filename)
+            shutil.copy2(reference_audio_path, temp_host_ref_audio_path_in_tmp_io)
+
+            # This is where Docker will save the embedding *inside the temp I/O dir*
+            temp_docker_output_embedding_filename = "embedding_from_docker.pt"
+            temp_docker_output_embedding_path_in_tmp_io = os.path.join(tmp_io_dir, temp_docker_output_embedding_filename)
+
+            # Define paths inside the container
+            container_data_dir = "/data"
+            container_scripts_dir = "/scripts"
+            container_docker_entry_script = os.path.join(container_scripts_dir, DOCKER_ENTRY_SCRIPT_NAME)
+
+            container_ref_audio_file = os.path.join(container_data_dir, temp_host_ref_audio_filename) # Mounted from temp_host_ref_audio_path_in_tmp_io
+            container_output_embedding_file = os.path.join(container_data_dir, temp_docker_output_embedding_filename) # Docker writes here
+
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{os.path.abspath(tmp_io_dir)}:{container_data_dir}",
+                "-v", f"{os.path.abspath(self.host_docker_entry_script_path)}:{container_docker_entry_script}:ro",
+            ]
+
+            if self.device_in_container == "cuda":
+                docker_cmd.append("--gpus=all")
+            elif self.device_in_container == "cpu":
+                docker_cmd.extend(["-e", "CUDA_VISIBLE_DEVICES=-1"])
+
+            docker_cmd.append(self.docker_image)
+            docker_cmd.extend([
+                "python", container_docker_entry_script,
+                "--generate-embedding-only",
+                "--speaker-ref-file", container_ref_audio_file,
+                "--output-embedding-file", container_output_embedding_file,
+                "--model-name", self.model_name_in_container,
+                "--device", self.device_in_container,
+            ])
+            # No dummy text file needed as zonos_docker_entry.py was updated
+
+            print(f"ZonosVoice: Executing Docker command for embedding generation: {' '.join(docker_cmd)}")
+            process = subprocess.run(docker_cmd, capture_output=True, text=True, check=False)
+
+            if process.returncode != 0 or ("SUCCESS" not in process.stdout and "SUCCESS" not in process.stderr) :
+                print(f"ERROR: ZonosVoice - Docker execution for embedding generation failed (Return Code: {process.returncode}).")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None # Failed to generate
+
+            # 3. Docker succeeded, move generated embedding from temp I/O to actual cache path
+            if os.path.exists(temp_docker_output_embedding_path_in_tmp_io):
+                shutil.move(temp_docker_output_embedding_path_in_tmp_io, embedding_cache_path)
+                print(f"INFO: ZonosVoice - Speaker embedding generated and saved to cache: {embedding_cache_path}")
+
+                # Now load it from cache to return
+                try:
+                    embedding_tensor = torch.load(embedding_cache_path, map_location='cpu') # Load to CPU
+                    print("INFO: ZonosVoice - Newly generated embedding loaded from cache.")
+                    return embedding_tensor
+                except Exception as e_load:
+                    print(f"ERROR: ZonosVoice - Failed to load newly generated embedding from cache '{embedding_cache_path}': {e_load}")
+                    return None # Failed to load after generating
+            else:
+                print(f"ERROR: ZonosVoice - Output embedding file '{temp_docker_output_embedding_path_in_tmp_io}' not found in temp I/O dir after Docker execution.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None # Docker said success, but file is missing
+
+        except Exception as e:
+            print(f"ERROR: ZonosVoice - An error occurred during speaker embedding retrieval/generation: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+        finally:
+            if tmp_io_dir and os.path.exists(tmp_io_dir):
+                try:
+                    shutil.rmtree(tmp_io_dir)
+                except Exception as e_clean:
+                    print(f"ERROR: ZonosVoice - Failed to clean up temporary I/O directory {tmp_io_dir}: {e_clean}")
+
 
 # Example usage (for conceptual testing - cannot run Docker directly here)
 if __name__ == '__main__':
