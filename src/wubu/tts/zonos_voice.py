@@ -151,6 +151,9 @@ class ZonosVoice(BaseTTSEngine):
             # The --gpus flag is for the docker daemon.
             if self.device_in_container == "cuda":
                 docker_cmd.append("--gpus=all") # Request all available GPUs
+            elif self.device_in_container == "cpu":
+                # Ensure no GPUs are visible to PyTorch inside the container for robust CPU execution
+                docker_cmd.extend(["-e", "CUDA_VISIBLE_DEVICES=-1"])
 
             # Docker image
             docker_cmd.append(self.docker_image)
@@ -252,6 +255,137 @@ class ZonosVoice(BaseTTSEngine):
             print(f"WARNING: ZonosVoice - Default voice path '{voice_id}' does not exist on host. This might cause issues.")
             self.default_voice = voice_id # Set it anyway, errors will occur at synthesis time
             return False # Indicate that the voice path is not valid as per this check
+
+    def create_speaker_embedding(self, host_reference_audio_path: str, host_output_embedding_path: str) -> bool:
+        """
+        Generates a speaker embedding from a reference audio file using the Zonos Docker container
+        and saves it to the specified host path.
+
+        Args:
+            host_reference_audio_path: Path to the reference audio file (.wav) on the host.
+            host_output_embedding_path: Path on the host to save the generated embedding file (e.g., speaker.pt).
+
+        Returns:
+            True if the embedding was generated and saved successfully, False otherwise.
+        """
+        if not self.is_docker_ok:
+            print("ERROR: ZonosVoice - Docker is not available or not working. Cannot create speaker embedding.")
+            return False
+
+        if not os.path.exists(self.host_docker_entry_script_path):
+            print(f"ERROR: ZonosVoice - Docker entry script missing at {self.host_docker_entry_script_path}. Cannot create embedding.")
+            return False
+
+        if not os.path.exists(host_reference_audio_path):
+            print(f"ERROR: ZonosVoice - Host reference audio file not found: {host_reference_audio_path}")
+            return False
+
+        # Ensure the output directory for the embedding on the host exists
+        host_output_embedding_dir = os.path.dirname(host_output_embedding_path)
+        if host_output_embedding_dir: # If it's not in the current directory
+            os.makedirs(host_output_embedding_dir, exist_ok=True)
+
+        tmp_io_dir = None # For files shared with Docker (ref audio, output embedding)
+        try:
+            # 1. Create a temporary directory for Docker I/O
+            tmp_io_dir = tempfile.mkdtemp(prefix="wubu_zonos_embed_")
+
+            # Define paths for files that will be copied into this temp I/O dir for Docker
+            # Docker needs a consistent name for the reference audio inside its mount.
+            temp_host_ref_audio_filename = "ref_audio_for_embedding" + os.path.splitext(host_reference_audio_path)[1]
+            temp_host_ref_audio_path = os.path.join(tmp_io_dir, temp_host_ref_audio_filename)
+
+            # Copy host reference audio to the temp I/O directory
+            shutil.copy2(host_reference_audio_path, temp_host_ref_audio_path)
+
+            temp_host_output_embedding_filename = "embedding.pt" # Fixed name for output from Docker
+            temp_host_output_embedding_path = os.path.join(tmp_io_dir, temp_host_output_embedding_filename)
+
+
+            # 2. Define paths inside the container
+            container_data_dir = "/data"
+            container_scripts_dir = "/scripts"
+            container_docker_entry_script = os.path.join(container_scripts_dir, DOCKER_ENTRY_SCRIPT_NAME)
+
+            container_ref_audio_file = os.path.join(container_data_dir, temp_host_ref_audio_filename)
+            container_output_embedding_file = os.path.join(container_data_dir, temp_host_output_embedding_filename)
+
+            # 3. Construct Docker command
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{os.path.abspath(tmp_io_dir)}:{container_data_dir}", # Mount the I/O dir
+                "-v", f"{os.path.abspath(self.host_docker_entry_script_path)}:{container_docker_entry_script}:ro",
+            ]
+
+            if self.device_in_container == "cuda":
+                docker_cmd.append("--gpus=all")
+            elif self.device_in_container == "cpu":
+                docker_cmd.extend(["-e", "CUDA_VISIBLE_DEVICES=-1"])
+
+            docker_cmd.append(self.docker_image) # Docker image
+
+            # Command to run inside the container
+            docker_cmd.extend([
+                "python", container_docker_entry_script,
+                "--generate-embedding-only",
+                "--speaker-ref-file", container_ref_audio_file,
+                "--output-embedding-file", container_output_embedding_file,
+                "--model-name", self.model_name_in_container, # Model needed for embedding
+                "--device", self.device_in_container,         # Device for script
+                # --text-file, --language, --rate are not needed for embedding generation
+                # However, zonos_docker_entry.py currently requires --text-file. This needs adjustment.
+                # For now, let's provide a dummy one. This part of zonos_docker_entry.py should be made conditional.
+                # TODO: Modify zonos_docker_entry.py to not require text_file if generate_embedding_only.
+                # As a temporary workaround, create a dummy text file.
+                "--text-file", os.path.join(container_data_dir, "dummy_input.txt")
+            ])
+            # Create dummy input file in tmp_io_dir for the workaround
+            with open(os.path.join(tmp_io_dir, "dummy_input.txt"), 'w') as f_dummy:
+                f_dummy.write("dummy")
+
+
+            print(f"ZonosVoice: Executing Docker command for embedding: {' '.join(docker_cmd)}")
+
+            # 4. Run Docker command
+            process = subprocess.run(docker_cmd, capture_output=True, text=True, check=False)
+
+            if process.returncode != 0:
+                print(f"ERROR: ZonosVoice - Docker execution for embedding failed (Return Code: {process.returncode}).")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return False
+
+            if "SUCCESS" not in process.stdout and "SUCCESS" not in process.stderr:
+                print(f"ERROR: ZonosVoice - Docker script (embedding) did not signal success.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return False
+            else:
+                print(f"ZonosVoice: Docker container for embedding executed successfully.")
+
+            # 5. Copy the generated embedding from temp I/O dir to the final host path
+            if os.path.exists(temp_host_output_embedding_path):
+                shutil.move(temp_host_output_embedding_path, host_output_embedding_path)
+                print(f"ZonosVoice: Speaker embedding successfully saved to {host_output_embedding_path}")
+                return True
+            else:
+                print(f"ERROR: ZonosVoice - Output embedding file '{temp_host_output_embedding_path}' not found after Docker execution.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return False
+
+        except Exception as e:
+            print(f"ERROR: ZonosVoice - An error occurred during speaker embedding creation: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        finally:
+            if tmp_io_dir and os.path.exists(tmp_io_dir):
+                try:
+                    shutil.rmtree(tmp_io_dir)
+                except Exception as e_clean:
+                    print(f"ERROR: ZonosVoice - Failed to clean up temporary I/O directory {tmp_io_dir}: {e_clean}")
+
 
 # Example usage (for conceptual testing - cannot run Docker directly here)
 if __name__ == '__main__':

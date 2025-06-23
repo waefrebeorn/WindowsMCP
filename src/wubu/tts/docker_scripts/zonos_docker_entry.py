@@ -26,14 +26,29 @@ def main():
     parser.add_argument("--device", default="cpu", help="Device to run on ('cpu' or 'cuda').")
     parser.add_argument("--speaker-ref-file", default=None, help="Optional path to a speaker reference audio file inside the container.")
     parser.add_argument("--rate", type=float, default=1.0, help="Speech rate (e.g., 1.0 for normal, <1.0 slower, >1.0 faster).")
+    parser.add_argument("--output-embedding-file", default=None, help="Path to save the generated speaker embedding file (e.g., speaker.pt).")
+    parser.add_argument("--generate-embedding-only", action="store_true", help="If set, only generate and save speaker embedding, then exit.")
     # Add other Zonos parameters as needed, e.g., pitch, emotion
 
     args = parser.parse_args()
 
+    if args.generate_embedding_only:
+        if not args.speaker_ref_file:
+            print_error("--speaker-ref-file is required when --generate-embedding-only is set.")
+            sys.exit(1)
+        if not args.output_embedding_file:
+            print_error("--output-embedding-file is required when --generate-embedding-only is set.")
+            sys.exit(1)
+
     # Validate paths (at least existence for inputs)
-    if not os.path.exists(args.text_file):
-        print_error(f"Input text file not found inside container: {args.text_file}")
-        sys.exit(1)
+    # Text file is not needed if only generating embedding
+    if not args.generate_embedding_only:
+        if not args.text_file:
+            print_error("Input text file (--text-file) is required for TTS.")
+            sys.exit(1)
+        if not os.path.exists(args.text_file):
+            print_error(f"Input text file not found inside container: {args.text_file}")
+            sys.exit(1)
 
     if args.speaker_ref_file and not os.path.exists(args.speaker_ref_file):
         print_error(f"Speaker reference file not found inside container: {args.speaker_ref_file}")
@@ -72,22 +87,45 @@ def main():
                 print(f"INFO: Loading reference audio from '{args.speaker_ref_file}' and creating speaker embedding...")
                 wav, sr = torchaudio.load(args.speaker_ref_file)
                 wav = wav.to(device) # Ensure tensor is on the correct device
-                speaker_embedding = zonos_model.make_speaker_embedding(wav, sr)
+                # Ensure the embedding is on the CPU for saving, regardless of the processing device.
+                speaker_embedding_tensor = zonos_model.make_speaker_embedding(wav, sr).cpu()
+                speaker_embedding = speaker_embedding_tensor # For use in TTS if not exiting
                 print("INFO: Speaker embedding created successfully.")
+
+                if args.generate_embedding_only:
+                    if args.output_embedding_file:
+                        print(f"INFO: Saving speaker embedding to '{args.output_embedding_file}'...")
+                        # Ensure output directory for embedding exists
+                        embedding_output_dir = os.path.dirname(args.output_embedding_file)
+                        if embedding_output_dir:
+                            os.makedirs(embedding_output_dir, exist_ok=True)
+                        torch.save(speaker_embedding_tensor, args.output_embedding_file)
+                        print(f"INFO: Speaker embedding successfully saved to '{args.output_embedding_file}'.")
+                        print("SUCCESS") # Signal success for embedding generation
+                        sys.exit(0) # Exit after saving embedding
+                    else:
+                        # This case should be caught by arg validation, but as a safeguard:
+                        print_error("No output file specified for saving the speaker embedding.")
+                        sys.exit(1)
             except Exception as e:
-                print_error(f"Failed to load reference audio or create speaker embedding from '{args.speaker_ref_file}': {e}")
+                print_error(f"Failed to load reference audio or create/save speaker embedding from '{args.speaker_ref_file}': {e}")
                 traceback.print_exc(file=sys.stderr)
-                # Continue without speaker embedding, Zonos might use a generic one or user might want this.
+                if args.generate_embedding_only:
+                    sys.exit(1) # Critical error if only generating embedding
+                # For TTS, continue without speaker embedding if it failed.
                 speaker_embedding = None
+        elif args.generate_embedding_only:
+            # This case implies --generate-embedding-only without --speaker-ref-file, caught by arg validation.
+            # However, as a safeguard during development:
+            print_error("Cannot generate embedding without a speaker reference file (--speaker-ref-file).")
+            sys.exit(1)
 
-
+        # Proceed with TTS if not in generate_embedding_only mode
         print(f"INFO: Preparing conditioning dictionary for language '{args.language}', rate '{args.rate}'.")
         # Basic conditioning dictionary
-        # More params can be added here from Zonos's make_cond_dict (pitch, energy, emotion, etc.)
-        # if passed as arguments to this script.
         conditioning_params = {
             'text': text_to_synthesize,
-            'speaker': speaker_embedding,
+            'speaker': speaker_embedding, # This will be None if embedding creation failed and not generate_embedding_only
             'language': args.language,
             'rate': args.rate
         }
