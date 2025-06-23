@@ -16,7 +16,7 @@ tts:
     language: "en"
     zonos_docker_image: "wubu_zonos_image" # Make sure this matches the built Docker image name
     zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer"
-    device_in_container: "cuda" # Change to "cuda" if Docker GPU passthrough is configured
+    device_in_container: "cpu" # Change to "cuda" if Docker GPU passthrough is configured
     default_reference_audio_path: "" # Optional: path to a .wav for default voice cloning.
 
 # ASR (Automatic Speech Recognition) Configuration
