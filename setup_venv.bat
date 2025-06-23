@@ -90,7 +90,6 @@ EXIT /B 0
     ECHO.
     ECHO ================================================================================
     ECHO [!SCRIPT_NAME!] IMPORTANT: Docker Desktop Installation Guide (for Zonos TTS)
-    ECHO.
     ECHO [!SCRIPT_NAME!] WuBu's Zonos Text-to-Speech engine requires a Docker container.
     ECHO.
     ECHO [!SCRIPT_NAME!] 1. Download Docker Desktop for Windows from the official website:
