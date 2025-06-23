@@ -25,5 +25,4 @@ soundfile
 numpy
 torchaudio
 customtkinter
-zonos
 word2number

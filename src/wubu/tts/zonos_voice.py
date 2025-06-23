@@ -1,24 +1,11 @@
-# WuBu Zonos TTS Engine
-# Implements Text-to-Speech using Zyphra's Zonos model.
+# WuBu Zonos TTS Engine (Docker-based)
+# Implements Text-to-Speech using Zyphra's Zonos model via a Docker container.
 
 import os
 import subprocess
 import tempfile
-import io
-
-try:
-    import torch
-    import torchaudio
-    from zonos.model import Zonos
-    from zonos.conditioning import make_cond_dict
-except ImportError:
-    # This will be caught by the TTSEngineManager or at instantiation
-    # and should prevent the engine from being used if Zonos is not installed.
-    print("WARNING: Zonos library or its dependencies (torch, torchaudio) not found. ZonosVoice engine will not be available.")
-    Zonos = None # Ensure Zonos is None if import fails
-    torch = None
-    torchaudio = None
-    make_cond_dict = None
+import shutil
+import platform  # For platform-specific path conversions if needed
 
 from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 
@@ -27,7 +14,7 @@ from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 LANGUAGE_MAP = {
     "en": "en-us",
     "en-us": "en-us",
-    "en-gb": "en-us", # Zonos might not distinguish UK/US well, map to general English
+    "en-gb": "en-us",
     "ja": "ja-jp",
     "ja-jp": "ja-jp",
     "zh": "zh-cn",
@@ -36,115 +23,71 @@ LANGUAGE_MAP = {
     "fr-fr": "fr-fr",
     "de": "de-de",
     "de-de": "de-de",
-    # Add other mappings as needed
 }
 
-DEFAULT_ZONOS_MODEL = "Zyphra/Zonos-v0.1-transformer"
+# Configuration keys expected from wubu_config.yaml for zonos_voice_engine section
+# These are examples, actual keys will be fetched from self.config
+DEFAULT_ZONOS_DOCKER_IMAGE = "wubu_zonos_image" # Default image tag for the locally built image
+DEFAULT_ZONOS_MODEL_INSIDE_CONTAINER = "Zyphra/Zonos-v0.1-transformer" # Model name for zonos_docker_entry.py
+DEFAULT_DEVICE_INSIDE_CONTAINER = "cpu" # "cpu" or "cuda"
+
+# Path to the docker entry script relative to this file's directory
+# (src/wubu/tts/zonos_voice.py -> src/wubu/tts/docker_scripts/zonos_docker_entry.py)
+DOCKER_ENTRY_SCRIPT_NAME = "zonos_docker_entry.py"
+DOCKER_ENTRY_SCRIPT_PATH_RELATIVE = os.path.join("docker_scripts", DOCKER_ENTRY_SCRIPT_NAME)
+
 
 class ZonosVoice(BaseTTSEngine):
     """
-    TTS Engine using Zyphra Zonos.
-    Requires 'zonos', 'torch', 'torchaudio', and 'espeak-ng' (system dependency).
+    TTS Engine using Zyphra Zonos via a Docker container.
+    Requires Docker to be installed and running.
+    The specified Zonos Docker image will be used.
     """
     def __init__(self, language='en', default_voice=None, config=None):
-        super().__init__(language, default_voice, config)
-        self.zonos_model = None
-        self.device = "cpu"
-        self.speaker_embeddings_cache = {} # Cache for loaded speaker embeddings
+        super().__init__(language, default_voice, config) # self.config is set here
+        self.is_docker_ok = False
+        self.docker_image = self.config.get('zonos_docker_image', DEFAULT_ZONOS_DOCKER_IMAGE)
 
-        if not Zonos or not torch or not torchaudio:
-            print("ERROR: ZonosVoice cannot initialize because Zonos library or PyTorch/Torchaudio is not installed.")
-            return
+        # Model name to be used *inside* the container by zonos_docker_entry.py
+        self.model_name_in_container = self.config.get('zonos_model_name_in_container', DEFAULT_ZONOS_MODEL_INSIDE_CONTAINER)
+        # Device to be used *inside* the container
+        self.device_in_container = self.config.get('device_in_container', DEFAULT_DEVICE_INSIDE_CONTAINER).lower()
 
-        if not self._check_espeak():
-            print("ERROR: eSpeak NG not found or not working. Zonos TTS requires eSpeak NG for phonemization.")
-            # WuBu might still run but Zonos TTS will fail.
-            # Consider raising an error or having a 'disabled' state.
-            return
+        # Path to the zonos_docker_entry.py script on the host, to be mounted into the container.
+        # It's assumed to be in a 'docker_scripts' subdirectory relative to this file.
+        current_script_dir = os.path.dirname(__file__)
+        self.host_docker_entry_script_path = os.path.abspath(os.path.join(current_script_dir, DOCKER_ENTRY_SCRIPT_PATH_RELATIVE))
 
-        self._initialize_model()
+        if not os.path.exists(self.host_docker_entry_script_path):
+            print(f"ERROR: ZonosVoice - Docker entry script not found at {self.host_docker_entry_script_path}")
+            # This is a critical setup error for this engine.
 
-    def _check_espeak(self) -> bool:
-        """Checks if espeak-ng is available and callable."""
+        self._check_docker()
+
+    def _check_docker(self) -> bool:
+        """Checks if Docker is available and callable."""
         try:
-            result = subprocess.run(['espeak-ng', '--version'], capture_output=True, text=True, check=False)
-            if result.returncode == 0 and "eSpeak NG" in result.stdout:
-                print("ZonosVoice: eSpeak NG found and working.")
-                return True
-            else:
-                print(f"ZonosVoice: eSpeak NG check failed. Return code: {result.returncode}, Output: {result.stdout.strip()} {result.stderr.strip()}")
-                return False
+            result = subprocess.run(['docker', '--version'], capture_output=True, text=True, check=True)
+            print(f"ZonosVoice: Docker found: {result.stdout.strip()}")
+            self.is_docker_ok = True
+            return True
         except FileNotFoundError:
-            print("ZonosVoice: eSpeak NG command not found. Ensure it's installed and in system PATH.")
+            print("ERROR: ZonosVoice - Docker command not found. Please install Docker Desktop and ensure 'docker' is in your system PATH.")
+            self.is_docker_ok = False
+            return False
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: ZonosVoice - Docker command failed: {e.stderr}")
+            self.is_docker_ok = False
             return False
         except Exception as e:
-            print(f"ZonosVoice: Error checking eSpeak NG: {e}")
+            print(f"ERROR: ZonosVoice - Error checking Docker: {e}")
+            self.is_docker_ok = False
             return False
-
-    def _initialize_model(self):
-        """Loads the Zonos model."""
-        model_name = self.config.get('zonos_model_name', DEFAULT_ZONOS_MODEL)
-
-        # Determine device
-        config_device = self.config.get('device', 'cpu').lower()
-        if config_device == "cuda" and torch.cuda.is_available():
-            self.device = "cuda"
-            print(f"ZonosVoice: Using CUDA device for Zonos model.")
-        elif config_device == "cuda" and not torch.cuda.is_available():
-            print(f"ZonosVoice: CUDA requested but not available. Falling back to CPU for Zonos model.")
-            self.device = "cpu"
-        else:
-            self.device = "cpu"
-            print(f"ZonosVoice: Using CPU device for Zonos model.")
-
-        try:
-            print(f"ZonosVoice: Loading Zonos model '{model_name}' on device '{self.device}'...")
-            self.zonos_model = Zonos.from_pretrained(model_name, device=self.device)
-            print(f"ZonosVoice: Zonos model '{model_name}' loaded successfully.")
-        except Exception as e:
-            print(f"ERROR: Failed to load Zonos model '{model_name}': {e}")
-            self.zonos_model = None # Ensure model is None if loading fails
-
-    def _get_speaker_embedding(self, voice_id: str = None):
-        """
-        Loads or retrieves a speaker embedding.
-        'voice_id' is expected to be a path to a reference audio file.
-        If None, a default/generic speaker might be attempted or error.
-        """
-        if voice_id is None:
-            # TODO: How to handle no voice_id? Zonos might have a generic speaker
-            # or we might need a default reference audio. For now, assume it's an error
-            # or Zonos `make_cond_dict` handles speaker=None.
-            # From Zonos docs, `speaker` is an optional arg to make_cond_dict.
-            print("ZonosVoice: No voice_id provided, will attempt synthesis without specific speaker embedding.")
-            return None
-
-        if not os.path.exists(voice_id):
-            print(f"ERROR: ZonosVoice - Reference audio file not found: {voice_id}")
-            return None
-
-        if voice_id in self.speaker_embeddings_cache:
-            return self.speaker_embeddings_cache[voice_id]
-
-        try:
-            print(f"ZonosVoice: Creating speaker embedding from {voice_id}...")
-            wav, sampling_rate = torchaudio.load(voice_id)
-            # Ensure wav is on the correct device for the model
-            wav = wav.to(self.device)
-            speaker_embedding = self.zonos_model.make_speaker_embedding(wav, sampling_rate)
-            self.speaker_embeddings_cache[voice_id] = speaker_embedding
-            print(f"ZonosVoice: Speaker embedding created and cached for {voice_id}.")
-            return speaker_embedding
-        except Exception as e:
-            print(f"ERROR: ZonosVoice - Failed to create speaker embedding from {voice_id}: {e}")
-            return None
 
     def _map_language(self, lang_code: str) -> str:
         return LANGUAGE_MAP.get(lang_code.lower(), LANGUAGE_MAP.get(lang_code.split('-')[0], "en-us"))
 
     def _map_speed_to_zonos_rate(self, speed: TTSPlaybackSpeed) -> float:
-        # Zonos `make_cond_dict` takes a `rate` parameter. Default is 1.0.
-        # Lower is slower, higher is faster. This mapping is an example.
         speed_map = {
             TTSPlaybackSpeed.VERY_SLOW: 0.7,
             TTSPlaybackSpeed.SLOW: 0.85,
@@ -155,60 +98,122 @@ class ZonosVoice(BaseTTSEngine):
         return speed_map.get(speed, 1.0)
 
     def synthesize_to_bytes(self, text: str, voice_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bytes | None:
-        if not self.zonos_model:
-            print("ERROR: ZonosVoice - Zonos model not loaded.")
+        if not self.is_docker_ok:
+            print("ERROR: ZonosVoice - Docker is not available or not working. Cannot synthesize.")
             return None
 
-        speaker_embedding = self._get_speaker_embedding(voice_id or self.default_voice)
-        # If speaker_embedding is None after trying default_voice, make_cond_dict will use its default.
+        if not os.path.exists(self.host_docker_entry_script_path):
+            print(f"ERROR: ZonosVoice - Docker entry script missing at {self.host_docker_entry_script_path}. Cannot synthesize.")
+            return None
 
-        mapped_language = self._map_language(self.language)
-        zonos_rate = self._map_speed_to_zonos_rate(speed)
+        # Determine speaker reference file on host
+        host_speaker_ref_file = voice_id or self.default_voice
+        if host_speaker_ref_file and not os.path.exists(host_speaker_ref_file):
+            print(f"WARNING: ZonosVoice - Reference audio file not found on host: {host_speaker_ref_file}. Attempting synthesis without it.")
+            host_speaker_ref_file = None # Will not mount if it doesn't exist
 
-        # Additional parameters for Zonos from kwargs (pitch, emotion, etc.)
-        # Example: cond_dict can take 'pitch', 'energy', 'emotion_embedding', 'quality_embedding'
-        # These would need to be passed via kwargs and match Zonos's expected names/formats.
-        # For now, focus on text, speaker, language, rate.
-        # Emotions: happiness, fear, sadness, anger - Zonos might take these as string names or embeddings.
-        # The `make_cond_dict` function in Zonos has parameters like:
-        # text, speaker, language, rate, pitch, energy, max_frequency, quality_embedding, emotion_embedding
-
-        z_kwargs = {'rate': zonos_rate}
-        # TODO: Map other kwargs like 'pitch', 'emotion' if provided.
-        # Example: if 'emotion' in kwargs: z_kwargs['emotion_name'] = kwargs['emotion'] (assuming Zonos takes name)
-
+        tmp_dir = None
         try:
-            print(f"ZonosVoice: Preparing conditioning for text: '{text[:50]}...' (Lang: {mapped_language}, Rate: {zonos_rate})")
-            cond_dict = make_cond_dict(
-                text=text,
-                speaker=speaker_embedding,
-                language=mapped_language,
-                **z_kwargs # Includes rate, and potentially other mapped params
-            )
-            conditioning = self.zonos_model.prepare_conditioning(cond_dict)
+            # 1. Create a temporary directory on the host for I/O with Docker
+            tmp_dir = tempfile.mkdtemp(prefix="wubu_zonos_")
+            host_input_text_file = os.path.join(tmp_dir, "input.txt")
+            host_output_wav_file = os.path.join(tmp_dir, "output.wav")
 
-            print("ZonosVoice: Generating audio codes...")
-            codes = self.zonos_model.generate(conditioning)
+            with open(host_input_text_file, 'w', encoding='utf-8') as f:
+                f.write(text)
 
-            print("ZonosVoice: Decoding audio codes...")
-            # .cpu() is important as torchaudio.save expects CPU tensor
-            wav_tensor = self.zonos_model.autoencoder.decode(codes).cpu()
+            # 2. Define paths inside the container
+            container_data_dir = "/data"
+            container_scripts_dir = "/scripts"
+            container_input_text_file = os.path.join(container_data_dir, "input.txt")
+            container_output_wav_file = os.path.join(container_data_dir, "output.wav")
+            container_docker_entry_script = os.path.join(container_scripts_dir, DOCKER_ENTRY_SCRIPT_NAME)
 
-            # Zonos outputs at 44.1kHz.
-            # The wav_tensor is likely [batch_size, num_channels, num_samples]
-            # For single synthesis, batch_size is 1. Assuming mono or first channel if stereo.
-            # If stereo, wav_tensor[0] would be [2, num_samples].
-            # Torchaudio save handles this.
+            container_speaker_ref_file = None
+            if host_speaker_ref_file:
+                # Mount the specific speaker file to a fixed name in /data or /assets inside container
+                container_speaker_ref_file = os.path.join(container_data_dir, "speaker_ref.wav")
 
-            buffer = io.BytesIO()
-            torchaudio.save(buffer, wav_tensor[0], self.zonos_model.autoencoder.sampling_rate, format="wav")
-            return buffer.getvalue()
+            # 3. Construct Docker command
+            # Basic command
+            docker_cmd = [
+                "docker", "run", "--rm",
+                "-v", f"{os.path.abspath(tmp_dir)}:{container_data_dir}",
+                "-v", f"{os.path.abspath(self.host_docker_entry_script_path)}:{container_docker_entry_script}:ro",
+            ]
+
+            # Mount speaker reference file if provided and exists
+            if host_speaker_ref_file:
+                docker_cmd.extend(["-v", f"{os.path.abspath(host_speaker_ref_file)}:{container_speaker_ref_file}:ro"])
+
+            # GPU access (if configured for container and host has it)
+            # Note: self.device_in_container is what the script *inside* docker will use.
+            # The --gpus flag is for the docker daemon.
+            if self.device_in_container == "cuda":
+                docker_cmd.append("--gpus=all") # Request all available GPUs
+
+            # Docker image
+            docker_cmd.append(self.docker_image)
+
+            # Command to run inside the container (entrypoint script + args)
+            docker_cmd.extend([
+                "python", container_docker_entry_script,
+                "--text-file", container_input_text_file,
+                "--output-wav-file", container_output_wav_file,
+                "--model-name", self.model_name_in_container,
+                "--language", self._map_language(self.language), # Use instance language
+                "--device", self.device_in_container, # Device for script inside container
+                "--rate", str(self._map_speed_to_zonos_rate(speed)),
+            ])
+            if container_speaker_ref_file: # Only add if it was prepared
+                docker_cmd.extend(["--speaker-ref-file", container_speaker_ref_file])
+
+            print(f"ZonosVoice: Executing Docker command: {' '.join(docker_cmd)}")
+
+            # 4. Run Docker command
+            process = subprocess.run(docker_cmd, capture_output=True, text=True, check=False)
+
+            if process.returncode != 0:
+                print(f"ERROR: ZonosVoice - Docker execution failed (Return Code: {process.returncode}).")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None
+
+            # Check for SUCCESS message from zonos_docker_entry.py
+            if "SUCCESS" not in process.stdout and "SUCCESS" not in process.stderr:
+                print(f"ERROR: ZonosVoice - Docker script did not signal success or may have failed silently before 'SUCCESS'.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}")
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None # If SUCCESS not found, assume failure to produce valid output.
+            else:
+                print(f"ZonosVoice: Docker container executed successfully and signalled SUCCESS.")
+                # Optional: print(f"Docker stdout: {process.stdout}") for debugging success cases too
+
+            # 5. Read the output WAV file
+            if os.path.exists(host_output_wav_file):
+                with open(host_output_wav_file, 'rb') as f_wav:
+                    audio_bytes = f_wav.read()
+                print(f"ZonosVoice: Successfully read synthesized audio from {host_output_wav_file}")
+                return audio_bytes
+            else:
+                print(f"ERROR: ZonosVoice - Output audio file '{host_output_wav_file}' not found after Docker execution.")
+                print(f"----- Docker STDOUT -----\n{process.stdout}") # Show logs if file is missing
+                print(f"----- Docker STDERR -----\n{process.stderr}")
+                return None
 
         except Exception as e:
-            print(f"ERROR: ZonosVoice - Failed to synthesize audio: {e}")
+            print(f"ERROR: ZonosVoice - An error occurred during Docker-based synthesis: {e}")
             import traceback
             traceback.print_exc()
             return None
+        finally:
+            # 6. Cleanup temporary directory
+            if tmp_dir and os.path.exists(tmp_dir):
+                try:
+                    shutil.rmtree(tmp_dir)
+                    # print(f"ZonosVoice: Cleaned up temporary directory: {tmp_dir}")
+                except Exception as e_clean:
+                    print(f"ERROR: ZonosVoice - Failed to clean up temporary directory {tmp_dir}: {e_clean}")
 
     def synthesize_to_file(self, text: str, output_filename: str, voice_id: str = None, speed: TTSPlaybackSpeed = TTSPlaybackSpeed.NORMAL, **kwargs) -> bool:
         audio_bytes = self.synthesize_to_bytes(text, voice_id, speed, **kwargs)
@@ -225,108 +230,102 @@ class ZonosVoice(BaseTTSEngine):
 
     def load_available_voices(self) -> list:
         """
-        Zonos voices are primarily generated via speaker embeddings from audio files.
-        This could list paths to pre-saved .pt speaker embedding files or known reference audio.
-        For now, returns an empty list, implying voice_id must be a path to reference audio.
+        Zonos voices are dynamically generated via speaker embeddings from audio files.
+        This engine does not offer a static list of pre-defined voices.
+        The 'voice_id' parameter in synthesis methods should be a path to a reference audio file.
         """
-        # Example: if we save speaker embeddings:
-        # saved_embeddings_dir = self.config.get("zonos_speaker_embeddings_dir", "wubu_speaker_embeddings")
-        # if os.path.exists(saved_embeddings_dir):
-        #     return [{"id": f, "name": os.path.splitext(f)[0], "path": os.path.join(saved_embeddings_dir, f)}
-        #             for f in os.listdir(saved_embeddings_dir) if f.endswith(".pt")]
         return []
 
     def set_default_voice(self, voice_id: str):
         """
         Sets the default voice for Zonos.
-        `voice_id` should be a path to a reference audio file for cloning,
-        or a key to a pre-cached/managed speaker embedding.
+        `voice_id` should be a path to a reference audio file on the host system for cloning.
         """
-        # Here, 'voice_id' is expected to be a path to a reference audio file.
-        # We don't check its availability in a static list, but we can check if the file exists.
-        if os.path.exists(voice_id):
+        if os.path.exists(voice_id): # Check if the path exists on the host
             self.default_voice = voice_id
             print(f"ZonosVoice: Default voice (reference audio path) set to: {voice_id}")
-            # Optionally, pre-load and cache the embedding
-            # self._get_speaker_embedding(voice_id)
             return True
         else:
-            # If it's not a file path, it might be a conceptual ID for a built-in Zonos voice (if any)
-            # or a pre-saved embedding ID. For now, assume file path.
-            # If self.load_available_voices() returned actual items, we'd use super().is_voice_available here.
-            print(f"Warning: ZonosVoice - Default voice path '{voice_id}' does not exist. It might be a conceptual ID.")
-            # Allow setting it anyway if it's not meant to be a direct file path for all cases.
-            self.default_voice = voice_id
-            return True # Or False if strict path checking is desired.
+            # If the path doesn't exist, it's likely an issue.
+            # However, BaseTTSEngine.set_default_voice checks is_voice_available,
+            # which for this engine will always be false. So, we handle it directly.
+            print(f"WARNING: ZonosVoice - Default voice path '{voice_id}' does not exist on host. This might cause issues.")
+            self.default_voice = voice_id # Set it anyway, errors will occur at synthesis time
+            return False # Indicate that the voice path is not valid as per this check
 
-# Example usage (for testing if run directly, though BaseTTSEngine handles some of this)
+# Example usage (for conceptual testing - cannot run Docker directly here)
 if __name__ == '__main__':
-    print("--- ZonosVoice Direct Test ---")
-    if not Zonos:
-        print("Zonos library not available, skipping test.")
+    print("--- ZonosVoice (Docker-based) Conceptual Test ---")
+
+    # Dummy config that would come from TTSEngineManager loading wubu_config.yaml
+    test_config = {
+        "zonos_docker_image": "zyphra/zonos-v0.1-transformer:latest", # Or your custom image
+        "zonos_model_name_in_container": "Zyphra/Zonos-v0.1-transformer",
+        "device_in_container": "cpu", # "cuda" if your Docker setup supports it
+        # "default_reference_audio_path": "path/to/your/host_speaker_ref.wav" # This would be self.default_voice
+    }
+
+    # Path to a dummy reference audio file on the HOST for testing
+    # Create a dummy .wav file for testing (requires soundfile and numpy)
+    host_dummy_ref_audio_path = None
+    temp_dir_for_dummy = tempfile.mkdtemp(prefix="wubu_zonos_test_dummy_")
+    try:
+        import soundfile as sf
+        import numpy as np
+        dummy_samplerate = 44100
+        dummy_duration = 1
+        dummy_freq = 440
+        t = np.linspace(0, dummy_duration, int(dummy_samplerate * dummy_duration), False)
+        dummy_audio_data = 0.5 * np.sin(2 * np.pi * dummy_freq * t)
+        dummy_audio_data = dummy_audio_data.astype(np.float32)
+
+        host_dummy_ref_audio_path = os.path.join(temp_dir_for_dummy, "host_dummy_ref.wav")
+        sf.write(host_dummy_ref_audio_path, dummy_audio_data, dummy_samplerate)
+        print(f"Created host dummy reference audio: {host_dummy_ref_audio_path}")
+    except ImportError:
+        print("Skipping dummy audio creation: soundfile or numpy not installed in test environment.")
+    except Exception as e:
+        print(f"Error creating dummy audio: {e}")
+
+    # Instantiate ZonosVoice
+    # default_voice (3rd arg) would be the 'default_reference_audio_path' from config
+    zonos_tts = ZonosVoice(language="en", default_voice=host_dummy_ref_audio_path, config=test_config)
+
+    if not zonos_tts.is_docker_ok:
+        print("Docker is not OK. Cannot proceed with test synthesis.")
+    elif not os.path.exists(zonos_tts.host_docker_entry_script_path):
+        print(f"Docker entry script zonos_docker_entry.py not found at expected location: {zonos_tts.host_docker_entry_script_path}")
     else:
-        # Dummy config
-        test_config = {
-            "zonos_model_name": DEFAULT_ZONOS_MODEL, # or "Zyphra/Zonos-v0.1-hybrid"
-            "device": "cpu", # "cuda" if available
-        }
+        text_to_speak = "Hello from WuBu using Zonos via Docker. This is a test."
 
-        # Create a dummy reference audio file for testing speaker embedding
-        # This requires soundfile to be installed for sf.write
+        # Test with default voice (which is host_dummy_ref_audio_path if created)
+        print(f"\nAttempting to synthesize with default voice (ref: {zonos_tts.default_voice})...")
+        output_wav_file_default = os.path.join(temp_dir_for_dummy, "zonos_test_docker_output_default.wav")
+        success_default = zonos_tts.synthesize_to_file(text_to_speak, output_wav_file_default, speed=TTSPlaybackSpeed.NORMAL)
+        if success_default:
+            print(f"Conceptual success: Synthesized to {output_wav_file_default} (using default voice)")
+            # To actually play: zonos_tts.play_synthesized_bytes(open(output_wav_file_default, 'rb').read())
+        else:
+            print(f"Conceptual failure: Failed to synthesize with default voice.")
+
+        # Test without any specific voice_id (if default_voice was also None or invalid)
+        # This relies on zonos_docker_entry.py and Zonos model handling speaker=None
+        original_default = zonos_tts.default_voice
+        zonos_tts.default_voice = None # Temporarily remove default to test this case
+        print(f"\nAttempting to synthesize without any specific speaker reference (speaker=None in container)...")
+        output_wav_file_no_speaker = os.path.join(temp_dir_for_dummy, "zonos_test_docker_output_no_speaker.wav")
+        success_no_speaker = zonos_tts.synthesize_to_file(text_to_speak, output_wav_file_no_speaker, speed=TTSPlaybackSpeed.FAST)
+        if success_no_speaker:
+            print(f"Conceptual success: Synthesized to {output_wav_file_no_speaker} (no specific speaker)")
+        else:
+            print(f"Conceptual failure: Failed to synthesize (no specific speaker).")
+        zonos_tts.default_voice = original_default # Restore
+
+    if os.path.exists(temp_dir_for_dummy):
         try:
-            import soundfile as sf
-            import numpy as np
-            dummy_samplerate = 44100 # Zonos native
-            dummy_duration = 3 # seconds
-            dummy_freq = 440 # A4
-            t = np.linspace(0, dummy_duration, int(dummy_samplerate * dummy_duration), False)
-            dummy_audio_data = 0.5 * np.sin(2 * np.pi * dummy_freq * t)
-            # Ensure it's float32 for soundfile
-            dummy_audio_data = dummy_audio_data.astype(np.float32)
+            shutil.rmtree(temp_dir_for_dummy)
+            print(f"Cleaned up test dummy directory: {temp_dir_for_dummy}")
+        except Exception as e_clean:
+            print(f"Error cleaning up test dummy directory {temp_dir_for_dummy}: {e_clean}")
 
-            temp_dir = tempfile.gettempdir()
-            dummy_ref_audio_path = os.path.join(temp_dir, "zonos_dummy_ref.wav")
-            sf.write(dummy_ref_audio_path, dummy_audio_data, dummy_samplerate)
-            print(f"Created dummy reference audio: {dummy_ref_audio_path}")
-
-            zonos_tts = ZonosVoice(config=test_config, language="en")
-
-            if zonos_tts.zonos_model: # Check if model loaded
-                text_to_speak = "Hello from WuBu using Zonos! This is a test of the emergency broadcast system."
-
-                output_wav_file = os.path.join(temp_dir, "zonos_test_output.wav")
-
-                print(f"\nAttempting to synthesize with specific speaker: {dummy_ref_audio_path}")
-                success = zonos_tts.synthesize_to_file(text_to_speak, output_wav_file, voice_id=dummy_ref_audio_path, speed=TTSPlaybackSpeed.NORMAL)
-
-                if success:
-                    print(f"Successfully synthesized to {output_wav_file}")
-                    # zonos_tts.play_synthesized_bytes(open(output_wav_file, 'rb').read()) # Test playback
-                else:
-                    print(f"Failed to synthesize with specific speaker.")
-
-                print(f"\nAttempting to synthesize with default (no specific speaker embedding):")
-                # This will test if Zonos handles speaker=None in make_cond_dict gracefully
-                output_wav_file_no_speaker = os.path.join(temp_dir, "zonos_test_output_no_speaker.wav")
-                success_no_speaker = zonos_tts.synthesize_to_file(text_to_speak, output_wav_file_no_speaker, speed=TTSPlaybackSpeed.FAST)
-                if success_no_speaker:
-                    print(f"Successfully synthesized (no speaker) to {output_wav_file_no_speaker}")
-                else:
-                    print(f"Failed to synthesize (no speaker).")
-
-            else:
-                print("Zonos model not loaded, skipping synthesis test.")
-
-            # Clean up dummy file
-            if os.path.exists(dummy_ref_audio_path):
-                os.remove(dummy_ref_audio_path)
-                print(f"Cleaned up dummy reference audio: {dummy_ref_audio_path}")
-
-        except ImportError:
-            print("Skipping ZonosVoice direct test: soundfile or numpy not installed for dummy audio creation.")
-        except Exception as e:
-            print(f"Error during ZonosVoice direct test: {e}")
-            import traceback
-            traceback.print_exc()
-
-    print("--- ZonosVoice Direct Test Finished ---")
+    print("--- ZonosVoice (Docker-based) Conceptual Test Finished ---")

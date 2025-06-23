@@ -122,15 +122,24 @@ class TTSEngineManager:
                     default_voice=default_zonos_ref_path, # This is the path to reference audio
                     config=zonos_config # Pass the whole zonos_voice_engine section
                 )
-                if engine_instance.zonos_model: # Check if Zonos model loaded successfully
+                # For Docker-based Zonos, check if Docker is OK instead of direct model loading.
+                if hasattr(engine_instance, 'is_docker_ok') and engine_instance.is_docker_ok:
                     self.engines[ZONOS_ENGINE_ID] = engine_instance
-                    print(f"ZonosVoice engine loaded successfully with manager ID: {ZONOS_ENGINE_ID}")
+                    print(f"ZonosVoice (Docker) engine appears ready with manager ID: {ZONOS_ENGINE_ID}")
                     if default_zonos_ref_path:
-                        print(f"ZonosVoice default reference audio set to: {default_zonos_ref_path}")
-                else:
-                    print(f"Failed to initialize the Zonos model for ZonosVoice engine. Check eSpeak NG and model paths/names.")
+                        print(f"ZonosVoice default reference audio (host path) set to: {default_zonos_ref_path}")
+                elif not (hasattr(engine_instance, 'is_docker_ok')):
+                    # This case would be if ZonosVoice was reverted to non-Docker and we forgot to update this check
+                    print(f"WARNING: ZonosVoice instance does not have 'is_docker_ok' attribute. Assuming old non-Docker version and attempting to check 'zonos_model'.")
+                    if hasattr(engine_instance, 'zonos_model') and engine_instance.zonos_model:
+                         self.engines[ZONOS_ENGINE_ID] = engine_instance
+                         print(f"ZonosVoice (non-Docker, fallback check) engine loaded with model.")
+                    else:
+                        print(f"Failed to initialize ZonosVoice engine (fallback check). Docker not okay or model not loaded.")
+                else: # is_docker_ok is False
+                    print(f"ZonosVoice (Docker) engine not loaded: Docker check failed. Please ensure Docker is installed, running, and accessible.")
             except Exception as e:
-                print(f"Error loading ZonosVoice engine: {e}")
+                print(f"Error loading ZonosVoice (Docker) engine: {e}")
                 import traceback
                 traceback.print_exc()
 
