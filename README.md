@@ -50,7 +50,6 @@
     *   Ensure Docker Desktop is running after installation. **This is crucial before running `setup_venv.bat` for Zonos setup.**
     *   The `setup_venv.bat` script will check for Docker. If found and running, it will attempt to clone the Zonos repository (if not already present in a `Zonos_src` subdirectory) and then build a local Docker image named `wubu_zonos_image` using Zonos's own Dockerfile. This image is then used by WuBu for Zonos TTS.
 
-
 ## Setup Instructions
 
 1.  **Clone the Repository**:

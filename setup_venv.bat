@@ -65,31 +65,38 @@ EXIT /B 0
     ECHO [!SCRIPT_NAME!] Checking for Docker (required for Zonos TTS)...
     docker --version >NUL 2>NUL
     IF !ERRORLEVEL! EQU 0 (
-        ECHO [!SCRIPT_NAME!] Docker found and accessible.
-        SET "DOCKER_INSTALLED=true"
-        CALL :BuildZonosImageFromSource
-    ) ELSE (
-        ECHO [!SCRIPT_NAME!] WARNING: Docker not found on system PATH or Docker Desktop not running/accessible.
-        SET "DOCKER_INSTALLED=false"
-        CALL :DockerInstallGuide
-        REM Re-check Docker status after user attempts installation/start Docker.
-        ECHO [!SCRIPT_NAME!] Re-checking for Docker...
-        docker --version >NUL 2>NUL
+        ECHO [!SCRIPT_NAME!] Docker command is accessible. Checking if Docker engine is responsive...
+        docker ps >NUL 2>NUL
         IF !ERRORLEVEL! EQU 0 (
-            ECHO [!SCRIPT_NAME!] Docker now detected. Proceeding to build Zonos image from source...
+            ECHO [!SCRIPT_NAME!] Docker engine is responsive.
             SET "DOCKER_INSTALLED=true"
             CALL :BuildZonosImageFromSource
+            IF !ERRORLEVEL! NEQ 0 (
+                ECHO [!SCRIPT_NAME!] ERROR: The Zonos Docker image preparation process failed. Zonos TTS may not function. (Error Code: !ERRORLEVEL!)
+            )
         ) ELSE (
-            ECHO [!SCRIPT_NAME!] Docker still not found or not accessible. Zonos TTS will not function.
-            ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is installed, running, and 'docker' command is usable from this terminal.
+            ECHO [!SCRIPT_NAME!] ERROR: Docker command found, but Docker engine is not responsive or `docker ps` failed. (Error Code: !ERRORLEVEL!)
+            ECHO [!SCRIPT_NAME!] Please ensure Docker Desktop is running correctly and has finished initializing.
+            SET "DOCKER_INSTALLED=false"
+            CALL :DockerInstallGuide
+            ECHO [!SCRIPT_NAME!] Please re-run this script after ensuring Docker Desktop is fully operational.
         )
+    ) ELSE (
+        ECHO [!SCRIPT_NAME!] WARNING: Docker command not found on system PATH.
+        SET "DOCKER_INSTALLED=false"
+        CALL :DockerInstallGuide
+        ECHO [!SCRIPT_NAME!] Please re-run this script after installing Docker and ensuring it's in PATH.
     )
+    REM Do not EXIT /B from :CheckDocker directly, let main script decide or continue for other deps.
+    REM The errorlevel from CALL :BuildZonosImageFromSource will be implicitly returned if it exits.
+    REM If DockerInstallGuide is called, we expect the user to re-run.
 EXIT /B 0
 
 :DockerInstallGuide
     ECHO.
     ECHO ================================================================================
     ECHO [!SCRIPT_NAME!] IMPORTANT: Docker Desktop Installation Guide (for Zonos TTS)
+    ECHO.
     ECHO [!SCRIPT_NAME!] WuBu's Zonos Text-to-Speech engine requires a Docker container.
     ECHO.
     ECHO [!SCRIPT_NAME!] 1. Download Docker Desktop for Windows from the official website:
@@ -124,34 +131,48 @@ EXIT /B 0
     REM Check if Zonos source directory exists
     IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!" (
         ECHO [!SCRIPT_NAME!] Zonos source directory "!ZONOS_SRC_DIR!" not found. Cloning from !ZONOS_REPO_URL!...
-        git clone "!ZONOS_REPO_URL!" "!ZONOS_SRC_DIR!"
-        IF !ERRORLEVEL! NEQ 0 (
-            ECHO [!SCRIPT_NAME!] ERROR: Failed to clone Zonos repository from !ZONOS_REPO_URL!. (Error Code: !ERRORLEVEL!)
-            ECHO [!SCRIPT_NAME!] Please check your internet connection and Git installation. Zonos TTS cannot be set up.
+        git clone --depth 1 "!ZONOS_REPO_URL!" "!ZONOS_SRC_DIR!"
+        SET "GIT_CLONE_ERRORLEVEL=!ERRORLEVEL!"
+        IF !GIT_CLONE_ERRORLEVEL! NEQ 0 (
+            ECHO [!SCRIPT_NAME!] ERROR: Failed to clone Zonos repository from !ZONOS_REPO_URL!. (Error Code: !GIT_CLONE_ERRORLEVEL!)
+            ECHO [!SCRIPT_NAME!] Please check your internet connection, Git installation, and repository URL. Zonos TTS cannot be set up.
             EXIT /B 1
         )
-        ECHO [!SCRIPT_NAME!] Zonos repository cloned successfully.
+        REM Additional check for directory and Dockerfile existence after successful ERRORLEVEL from git clone
+        IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!\Dockerfile" (
+            ECHO [!SCRIPT_NAME!] ERROR: Zonos repository cloned, but key file 'Dockerfile' is missing in "%~dp0!ZONOS_SRC_DIR!".
+            ECHO [!SCRIPT_NAME!] The repository structure might have changed or the clone was incomplete. Zonos TTS cannot be set up.
+            EXIT /B 1
+        )
+        ECHO [!SCRIPT_NAME!] Zonos repository cloned successfully into "!ZONOS_SRC_DIR!".
     ) ELSE (
         ECHO [!SCRIPT_NAME!] Zonos source directory "!ZONOS_SRC_DIR!" already exists. Skipping clone.
-        ECHO [!SCRIPT_NAME!] To ensure you have the latest Zonos source for the Docker build, you may want to manually delete this directory and re-run this script.
+        IF NOT EXIST "%~dp0!ZONOS_SRC_DIR!\Dockerfile" (
+            ECHO [!SCRIPT_NAME!] WARNING: Zonos source directory "!ZONOS_SRC_DIR!" exists, but key file 'Dockerfile' is missing.
+            ECHO [!SCRIPT_NAME!] The existing directory might be corrupted or not a valid Zonos source.
+            ECHO [!SCRIPT_NAME!] Consider deleting this directory and re-running the script to ensure a clean clone.
+            ECHO [!SCRIPT_NAME!] Proceeding with build attempt, but it may fail.
+        )
+        ECHO [!SCRIPT_NAME!] To ensure you have the latest Zonos source for the Docker build, you may want to manually delete "!ZONOS_SRC_DIR!" and re-run this script.
     )
 
     ECHO [!SCRIPT_NAME!] Building Zonos Docker image (!WUBU_ZONOS_IMAGE_TAG!) from source in "!ZONOS_SRC_DIR!"...
     ECHO [!SCRIPT_NAME!] This will use the Dockerfile provided within the Zonos repository.
     PUSHD "%~dp0!ZONOS_SRC_DIR!"
     IF !ERRORLEVEL! NEQ 0 (
-        ECHO [!SCRIPT_NAME!] ERROR: Could not change directory to "%~dp0!ZONOS_SRC_DIR!".
+        ECHO [!SCRIPT_NAME!] ERROR: Could not change directory to "%~dp0!ZONOS_SRC_DIR!". (Error Code: !ERRORLEVEL!)
         EXIT /B 1
     )
 
     docker build -t "!WUBU_ZONOS_IMAGE_TAG!" .
-    IF !ERRORLEVEL! NEQ 0 (
-        ECHO [!SCRIPT_NAME!] ERROR: Failed to build Zonos Docker image "!WUBU_ZONOS_IMAGE_TAG!" from source. (Error Code: !ERRORLEVEL!)
-        ECHO [!SCRIPT_NAME!] Please check Docker Desktop is running, and review any errors from the 'docker build' command above.
-        POPD
+    SET "DOCKER_BUILD_ERRORLEVEL=!ERRORLEVEL!"
+    POPD
+    IF !DOCKER_BUILD_ERRORLEVEL! NEQ 0 (
+        ECHO [!SCRIPT_NAME!] ERROR: Failed to build Zonos Docker image "!WUBU_ZONOS_IMAGE_TAG!" from source. (Error Code: !DOCKER_BUILD_ERRORLEVEL!)
+        ECHO [!SCRIPT_NAME!] Please check Docker Desktop is running correctly, and review any errors from the 'docker build' command output above.
         EXIT /B 1
     )
-    POPD
+
     ECHO [!SCRIPT_NAME!] Successfully built Zonos Docker image: !WUBU_ZONOS_IMAGE_TAG!.
 EXIT /B 0
 
