@@ -1,0 +1,69 @@
+# WuBu Configuration File
+# This file contains example configurations for WuBu subsystems.
+
+# General WuBu Settings
+wubu_name: "WuBu"
+profile: "default"
+
+# TTS (Text-to-Speech) Configuration
+tts:
+  default_voice: "zonos_engine_cloning_service" # Correct ID for Zonos engine
+  estimated_max_speech_duration: 7
+
+  # Configuration for WubuGLaDOSStyleVoice (Coqui XTTSv2 based characteristic voice)
+  wubu_glados_style_voice:
+    enabled: false # Disabled as per user request
+    language: 'en'
+    model_subdir: 'glados_tts_models'
+    speaker_wav_filename: 'glados_reference.wav'
+    use_gpu: true
+
+  # Configuration for WubuKokoroVoice (Standard/Neutral voice)
+  wubu_kokoro_voice:
+    enabled: false # Disabled as per user request
+    engine_type: 'coqui'
+    language: 'en'
+    coqui_model_name: "tts_models/en/ljspeech/tacotron2-DDC"
+    use_gpu: true
+
+  # Configuration for ZonosVoice (Docker-based, high-quality, voice cloning)
+  zonos_voice_engine:
+    enabled: true # Enabled as primary TTS
+    language: "en"
+    zonos_docker_image: "wubu_zonos_image" # Make sure this matches the built Docker image name
+    zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer"
+    device_in_container: "cpu" # Change to "cuda" if Docker GPU passthrough is configured
+    default_reference_audio_path: "" # Optional: path to a .wav for voice cloning. If set, Zonos will use this by default.
+
+# ASR (Automatic Speech Recognition) Configuration
+asr:
+  enabled: false # Keep disabled unless explicitly requested
+  engine: "vosk"
+  vosk_model_path: "asr_models/vosk-model-small-en-us-0.15"
+  vosk_sample_rate: 16000
+  audio_input_device_index: null
+  silence_threshold: 1.0
+
+# LLM (Large Language Model) Configuration
+llm:
+  provider: "ollama"
+  ollama_settings:
+    model: "qwen2.5-coder:7b-instruct-q4_K_M" # Set to user's preferred model
+    host: "http://localhost:11434"
+    # request_timeout: 60
+
+# Vision Subsystem Configuration (Moondream v2 is used via desktop_tools/moondream_interaction.py, not directly configured here usually)
+vision:
+  enabled: false # General vision subsystem toggle, specific tools like moondream might operate independently if called.
+
+# Desktop Tools Configuration
+desktop_tools:
+  enabled: true
+  # context_provider_enabled: true # This is now managed in engine.py based on desktop_tools.enabled
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  log_file: "wubu.log"
+  max_log_size_mb: 10
+  backup_count: 3
