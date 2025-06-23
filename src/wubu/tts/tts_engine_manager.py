@@ -3,12 +3,14 @@
 
 from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 # Import specific engine implementations that will be managed
-# from .glados_voice import WubuGLaDOSStyleVoice # Removed
-# from .kokoro_voice import WubuKokoroVoice # Removed
-from .zonos_voice import ZonosVoice # Import ZonosVoice
+# from .glados_voice import WubuGLaDOSStyleVoice # Example of other engines
+# from .kokoro_voice import WubuKokoroVoice # Example of other engines
+# from .zonos_voice import ZonosVoice # OLD Docker-based Zonos
+from .zonos_local_voice import ZonosLocalVoice # NEW Local Zonos
 
-# Define a conceptual ID for the Zonos engine itself within the manager
-ZONOS_ENGINE_ID = "zonos_engine_cloning_service"
+# Define conceptual IDs for the Zonos engines
+ZONOS_DOCKER_ENGINE_ID = "zonos_engine_docker_cloning" # For old Docker one, if kept temporarily
+ZONOS_LOCAL_ENGINE_ID = "zonos_engine_local_cloning"
 
 
 class TTSEngineManager:
@@ -34,41 +36,72 @@ class TTSEngineManager:
         The configuration should specify which engines to enable and their parameters.
         """
         tts_config = self.config.get('tts', {})
-        default_voice_preference = tts_config.get('default_voice', ZONOS_ENGINE_ID) # Default to Zonos
+        # Default preference can now be the local Zonos
+        default_voice_preference = tts_config.get('default_voice', ZONOS_LOCAL_ENGINE_ID)
 
-        # --- Load Zonos Voice Engine ---
-        zonos_config_section_name = 'zonos_voice_engine' # Key in YAML/dict config
-        zonos_config = tts_config.get(zonos_config_section_name, {})
-        if zonos_config.get('enabled', True): # Enabled by default if section exists, or if tts.default_voice points to it
+        # --- Load Local Zonos Voice Engine ---
+        zonos_local_config_section_name = 'zonos_local_engine' # New config section name
+        zonos_local_config = tts_config.get(zonos_local_config_section_name, {})
+        # Enable local Zonos by default if its section exists, or if it's the default_voice preference
+        enable_local_zonos = zonos_local_config.get('enabled', default_voice_preference == ZONOS_LOCAL_ENGINE_ID or zonos_local_config_section_name in tts_config)
+
+        if enable_local_zonos:
             try:
-                print("Loading ZonosVoice engine...")
-                default_zonos_ref_path = zonos_config.get('default_reference_audio_path')
-
-                engine_instance = ZonosVoice(
-                    language=zonos_config.get('language', 'en'),
-                    default_voice=default_zonos_ref_path,
-                    config=zonos_config
+                print("Loading ZonosLocalVoice engine...")
+                # default_reference_audio_path is now directly used by ZonosLocalVoice via its config
+                engine_instance_local = ZonosLocalVoice(
+                    language=zonos_local_config.get('language', 'en'),
+                    default_voice=zonos_local_config.get('default_reference_audio_path'), # Passed to init
+                    config=zonos_local_config # Pass the whole section
                 )
-                if hasattr(engine_instance, 'is_docker_ok') and engine_instance.is_docker_ok:
-                    self.engines[ZONOS_ENGINE_ID] = engine_instance
-                    print(f"ZonosVoice (Docker) engine appears ready with manager ID: {ZONOS_ENGINE_ID}")
-                    if default_zonos_ref_path:
-                        print(f"ZonosVoice default reference audio (host path) set to: {default_zonos_ref_path}")
+                # Check if model loaded successfully (zonos_model is not None)
+                if engine_instance_local.zonos_model is not None:
+                    self.engines[ZONOS_LOCAL_ENGINE_ID] = engine_instance_local
+                    print(f"ZonosLocalVoice engine loaded successfully with manager ID: {ZONOS_LOCAL_ENGINE_ID}")
+                    if engine_instance_local.default_voice:
+                         print(f"ZonosLocalVoice default reference audio set to: {engine_instance_local.default_voice}")
                 else:
-                    print(f"ZonosVoice (Docker) engine not loaded: Docker check failed or attribute missing. Please ensure Docker is installed, running, and accessible.")
+                    print(f"ZonosLocalVoice engine not loaded: Zonos model failed to initialize within the engine.")
             except Exception as e:
-                print(f"Error loading ZonosVoice (Docker) engine: {e}")
+                print(f"Error loading ZonosLocalVoice engine: {e}")
                 import traceback
                 traceback.print_exc()
         else:
-            print("ZonosVoice engine explicitly disabled in configuration.")
+            print("ZonosLocalVoice engine explicitly disabled or not configured.")
+
+        # --- Load OLD Docker Zonos Voice Engine (Commented out as per plan to replace) ---
+        # zonos_docker_config_section_name = 'zonos_voice_engine' # Old config section for Docker
+        # zonos_docker_config = tts_config.get(zonos_docker_config_section_name, {})
+        # enable_docker_zonos = zonos_docker_config.get('enabled', False) # Disabled by default now
+
+        # if enable_docker_zonos:
+        #     try:
+        #         print("Loading ZonosVoice (Docker) engine...")
+        #         default_zonos_docker_ref_path = zonos_docker_config.get('default_reference_audio_path')
+        #         from .zonos_voice import ZonosVoice # Import here to avoid issues if file is deleted
+        #         engine_instance_docker = ZonosVoice(
+        #             language=zonos_docker_config.get('language', 'en'),
+        #             default_voice=default_zonos_docker_ref_path,
+        #             config=zonos_docker_config
+        #         )
+        #         if hasattr(engine_instance_docker, 'is_docker_ok') and engine_instance_docker.is_docker_ok:
+        #             self.engines[ZONOS_DOCKER_ENGINE_ID] = engine_instance_docker
+        #             print(f"ZonosVoice (Docker) engine loaded with manager ID: {ZONOS_DOCKER_ENGINE_ID}")
+        #         else:
+        #             print(f"ZonosVoice (Docker) engine not loaded: Docker check failed.")
+        #     except Exception as e:
+        #         print(f"Error loading ZonosVoice (Docker) engine: {e}")
+        # else:
+        #     print("ZonosVoice (Docker) engine disabled in configuration.")
 
 
-        # Set default engine
-        if default_voice_preference == ZONOS_ENGINE_ID and ZONOS_ENGINE_ID in self.engines:
-            self.default_engine_id = ZONOS_ENGINE_ID
-        elif self.engines: # Fallback to the first loaded engine if any (should be Zonos if it loaded)
+        # Set default engine based on preference and availability
+        if default_voice_preference in self.engines:
+            self.default_engine_id = default_voice_preference
+        elif self.engines: # Fallback to the first loaded available engine
              self.default_engine_id = list(self.engines.keys())[0]
+        else:
+            self.default_engine_id = None
 
 
         if self.default_engine_id:
@@ -76,7 +109,7 @@ class TTSEngineManager:
             if default_voice_preference != self.default_engine_id and default_voice_preference is not None :
                  print(f"TTSManager: Note - Preferred default voice '{default_voice_preference}' was not available or failed to load. Using '{self.default_engine_id}'.")
         else:
-            print("TTSManager: No TTS engines loaded or no default could be set. Zonos may have failed to initialize.")
+            print("TTSManager: No TTS engines loaded or no default could be set. WuBu TTS might not function.")
 
 
     def get_engine(self, engine_id: str = None) -> BaseTTSEngine | None:
@@ -141,56 +174,74 @@ class TTSEngineManager:
                 if isinstance(voice_info, dict): # Should not happen for Zonos
                     all_voices.append(voice_info)
         if ZONOS_ENGINE_ID in self.engines and not all_voices:
-            all_voices.append({
-                "name": "Zonos Voice Cloning (Dynamic)",
-                "engine_id": ZONOS_ENGINE_ID,
-                "description": "Provide reference audio via 'voice_id' path for cloning."
-            })
+            # If ZonosLocalVoice is loaded, its get_available_voices will be called.
+            # That method already returns a conceptual entry.
+            # This specific append might be redundant if ZonosLocalVoice is the only one.
+            # Let's refine: if only ZONOS_LOCAL_ENGINE_ID is present and it returned its conceptual voice.
+            pass # ZonosLocalVoice.get_available_voices() handles its own conceptual entry.
+
         return all_voices
 
 if __name__ == '__main__':
-    print("Testing TTSEngineManager for WuBu (Zonos Focused)...")
+    print("Testing TTSEngineManager for WuBu (Local Zonos Focused)...")
 
-    # ZonosVoice class is already imported; ZONOS_ENGINE_ID is defined in this file.
-    dummy_manager_config = {
+    # Configuration for the new ZonosLocalVoice
+    dummy_manager_config_local_zonos = {
         'tts': {
-            'default_voice': ZONOS_ENGINE_ID,
-            'zonos_voice_engine': {
+            'default_voice': ZONOS_LOCAL_ENGINE_ID, # Prefer local Zonos
+            'zonos_local_engine': { # New configuration section for local Zonos
                 'enabled': True,
                 'language': 'en',
-                'zonos_docker_image': "wubu_zonos_image", # Ensure this matches your local build
-                'zonos_model_name_in_container': "Zyphra/Zonos-v0.1-transformer",
-                'device_in_container': "cpu",
-                'default_reference_audio_path': "" # Set to a valid .wav path for testing default cloning
-            }
+                'model_id': "Zyphra/Zonos-v0.1-transformer", # Or a local path if needed by Zonos.from_pretrained
+                'device': "cpu", # "cuda" if available and desired
+                'default_reference_audio_path': "", # Path to a default .wav for cloning
+                # Add other Zonos-specific params here if ZonosLocalVoice uses them from config
+                # e.g. 'cfg_scale': 2.0, 'sampling_params': {'min_p':0.1}
+            },
+            # 'zonos_voice_engine': { # Old Docker config - can be removed or disabled
+            #     'enabled': False,
+            # }
         }
     }
-    if not dummy_manager_config['tts']['zonos_voice_engine']['default_reference_audio_path']:
-        print("INFO: For __main__ test, 'default_reference_audio_path' for Zonos is empty.")
-        print("      Synthesis with default voice will likely use Zonos's internal fallback (if any) or fail if it requires a ref.")
-        print("      To test cloning, provide a valid .wav path for 'default_reference_audio_path'.")
+    if not dummy_manager_config_local_zonos['tts']['zonos_local_engine']['default_reference_audio_path']:
+        print("INFO: For __main__ test, 'default_reference_audio_path' for Local Zonos is empty.")
+        print("      Synthesis with default voice will rely on Zonos model's behavior for speaker=None.")
 
-
-    manager = TTSEngineManager(config=dummy_manager_config)
+    manager = TTSEngineManager(config=dummy_manager_config_local_zonos)
 
     if not manager.engines:
-        print("No engines loaded. Zonos failed to initialize. Check Docker and ZonosVoice logs.")
+        print("No engines loaded. Local Zonos may have failed to initialize. Check logs.")
     else:
         print(f"\nAvailable voices in manager: {manager.get_available_voices()}")
         print(f"Default engine ID in manager: {manager.default_engine_id}")
 
-        if manager.default_engine_id == ZONOS_ENGINE_ID:
+        if manager.default_engine_id == ZONOS_LOCAL_ENGINE_ID:
             print(f"\n--- Testing speech with default engine: {manager.default_engine_id} ---")
-            default_ref = dummy_manager_config['tts']['zonos_voice_engine']['default_reference_audio_path']
-            if default_ref:
-                 print(f"(This will use Zonos with its configured default_reference_audio_path: {default_ref})")
+            default_ref_local = dummy_manager_config_local_zonos['tts']['zonos_local_engine']['default_reference_audio_path']
+            if default_ref_local:
+                 print(f"(This will use Local Zonos with its configured default_reference_audio_path: {default_ref_local})")
             else:
-                print("(This will use Zonos without a specific reference audio, relying on its internal default behavior.)")
-            manager.speak("Hello from WuBu, testing the default Zonos engine.", engine_id=ZONOS_ENGINE_ID)
+                print("(This will use Local Zonos without a specific reference audio.)")
 
-            # Test with a specific (dummy) voice_id if you have a test file
-            # manager.speak("Testing Zonos voice cloning with a specific file.", engine_id=ZONOS_ENGINE_ID, voice_id="path/to/your/test_speaker.wav")
+            # This speak call would actually try to run the model.
+            # Ensure necessary model files for "Zyphra/Zonos-v0.1-transformer" are downloadable by Zonos.from_pretrained,
+            # or that the model_id points to a valid local Zonos model setup.
+            # Also, espeak-ng needs to be functional.
+            manager.speak("Hello from WuBu, testing the local Zonos engine.", engine_id=ZONOS_LOCAL_ENGINE_ID)
+
+            # Example for testing with a specific speaker reference file:
+            # Create a dummy wav file if you don't have one.
+            # dummy_speaker_path = "dummy_speaker_ref.wav"
+            # try:
+            #   import soundfile as sf
+            #   import numpy as np
+            #   sf.write(dummy_speaker_path, np.random.randn(16000).astype(np.float32), 16000)
+            #   print(f"Attempting synthesis with specific speaker ref: {dummy_speaker_path}")
+            #   manager.speak("Testing voice cloning with a local file.", engine_id=ZONOS_LOCAL_ENGINE_ID, voice_id=dummy_speaker_path)
+            # except Exception as e_speak_test:
+            #   print(f"Could not run specific speaker test: {e_speak_test}")
+
 
         print("\n--- Testing with a non-existent engine ID ---")
         manager.speak("This message should indicate engine not found.", engine_id="NonExistentEngine99")
-    print("\nTTSEngineManager (Zonos Focused) test finished.")
+    print("\nTTSEngineManager (Local Zonos Focused) test finished.")
