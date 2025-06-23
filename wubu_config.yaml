@@ -1,115 +1,69 @@
-# WuBu Configuration File (Template)
+# WuBu Configuration File
 # This file contains example configurations for WuBu subsystems.
-# Copy this to 'wubu_config.yaml' at the project root (or src/) and customize.
 
 # General WuBu Settings
 wubu_name: "WuBu"
-profile: "default" # Allows for different WuBu personalities or configurations
+profile: "default"
 
 # TTS (Text-to-Speech) Configuration
 tts:
-  default_voice: "WuBu-GLaDOS-Style" # Preferred default voice ID (e.g., "WuBu-GLaDOS-Style", "WuBu-Kokoro")
-  estimated_max_speech_duration: 7 # Seconds, used by CLI for waiting after direct input.
+  default_voice: "zonos_engine_cloning_service" # Correct ID for Zonos engine
+  estimated_max_speech_duration: 7
 
   # Configuration for WubuGLaDOSStyleVoice (Coqui XTTSv2 based characteristic voice)
   wubu_glados_style_voice:
-    enabled: true
+    enabled: false # Disabled as per user request
     language: 'en'
-    # model_subdir: name of the directory under src/wubu/tts/ that holds the model files
-    # e.g., "glados_tts_models" if you have src/wubu/tts/glados_tts_models/
     model_subdir: 'glados_tts_models'
-    # speaker_wav_filename: reference audio file within model_subdir for XTTSv2 voice cloning
-    speaker_wav_filename: 'glados_reference.wav' # You'll need to provide this file
-    use_gpu: true # true to use GPU for Coqui TTS if available, false for CPU
+    speaker_wav_filename: 'glados_reference.wav'
+    use_gpu: true
 
   # Configuration for WubuKokoroVoice (Standard/Neutral voice)
   wubu_kokoro_voice:
-    enabled: true
-    engine_type: 'coqui' # 'coqui' or 'piper' (if Piper backend is implemented in WubuKokoroVoice)
+    enabled: false # Disabled as per user request
+    engine_type: 'coqui'
     language: 'en'
-    # --- Coqui Settings for Kokoro (if engine_type is 'coqui') ---
-    coqui_model_name: "tts_models/en/ljspeech/tacotron2-DDC" # Standard, downloadable Coqui model
+    coqui_model_name: "tts_models/en/ljspeech/tacotron2-DDC"
     use_gpu: true
 
-    # --- Piper Settings for Kokoro (if engine_type is 'piper' and implemented) ---
-    # piper_model_filename: "en_US-standard-medium.onnx" # Example .onnx filename
-    # piper_model_subdir: "kokoro_tts_models/piper_en_us_standard_medium" # Subdir in src/wubu/tts/
-
   # Configuration for ZonosVoice (Docker-based, high-quality, voice cloning)
-  # Requires Docker Desktop to be installed and running.
-  # The `setup_venv.bat` script attempts to clone Zonos source and build 'wubu_zonos_image'.
   zonos_voice_engine:
-    enabled: false # Set to true to enable Zonos TTS
-    language: "en"  # Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
-                    # These map to Zonos specific codes like "en-us", "ja-jp", etc.
-    zonos_docker_image: "wubu_zonos_image" # Docker image to use for Zonos. This image is built by setup_venv.bat.
-    zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer" # Model name for the script inside Docker.
-                                                                 # This is the model Zonos library will load.
-    device_in_container: "cpu"   # Instructs script inside Docker to use "cpu" or "cuda".
-                                 # If "cuda", WuBu attempts to pass GPU access to the container.
-                                 # Host Docker setup must support GPU passthrough.
-    # Optional: Host path to a .wav audio file for default speaker voice cloning.
-    # This file will be mounted into the Docker container during synthesis.
-    # Use forward slashes (/) or properly escaped backslashes (\\) for YAML paths.
-    default_reference_audio_path: "" # e.g., "C:/Users/YourUser/audio_samples/my_voice.wav" or "assets/voices/speaker1.wav"
-
-  # Example for ElevenLabs (Cloud TTS - Not implemented in current files)
-  # elevenlabs_voice:
-  #   enabled: false
-  #   # Recommended: Set ELEVENLABS_API_KEY environment variable.
-  #   # api_key: "YOUR_ELEVENLABS_API_KEY" # Or set here (less secure for shared configs)
-  #   voice_id: "desired_elevenlabs_voice_id"
-
+    enabled: true # Enabled as primary TTS
+    language: "en"
+    zonos_docker_image: "wubu_zonos_image" # Make sure this matches the built Docker image name
+    zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer"
+    device_in_container: "cpu" # Change to "cuda" if Docker GPU passthrough is configured
+    default_reference_audio_path: "" # Optional: path to a .wav for voice cloning. If set, Zonos will use this by default.
 
 # ASR (Automatic Speech Recognition) Configuration
 asr:
-  enabled: false # Enable to use voice input features
-  engine: "vosk" # Placeholder: "vosk", "whisper", "google_cloud_stt", etc.
-
-  # Vosk specific settings (example)
-  # Assumes models are in project_root/asr_models/vosk-model-small-en-us-0.15
+  enabled: false # Keep disabled unless explicitly requested
+  engine: "vosk"
   vosk_model_path: "asr_models/vosk-model-small-en-us-0.15"
   vosk_sample_rate: 16000
-
-  # Whisper specific settings (example)
-  # whisper_model_size: "base.en"
-  # whisper_device: "cuda"
-
-  # Common ASR settings
-  audio_input_device_index: null # null for default, or integer for specific device
+  audio_input_device_index: null
   silence_threshold: 1.0
-
 
 # LLM (Large Language Model) Configuration
 llm:
-  provider: "ollama" # "ollama", "openai", "huggingface_hub", "anthropic", etc.
-
+  provider: "ollama"
   ollama_settings:
-    model: "phi:latest"
+    model: "qwen2.5-coder:7b-instruct-q4_K_M" # Set to user's preferred model
     host: "http://localhost:11434"
     # request_timeout: 60
 
-  # openai_settings:
-  #   # Recommended: Set OPENAI_API_KEY environment variable.
-  #   api_key: "YOUR_OPENAI_API_KEY" # Or set here (less secure for shared configs)
-  #   model: "gpt-3.5-turbo"
-  #   temperature: 0.7
-  #   max_tokens: 150
-
-# Vision Subsystem Configuration (Placeholder)
+# Vision Subsystem Configuration (Moondream v2 is used via desktop_tools/moondream_interaction.py, not directly configured here usually)
 vision:
-  enabled: false
-  # screen_capture_monitor: 0
-  # object_detection_model: "yolov5s"
+  enabled: false # General vision subsystem toggle, specific tools like moondream might operate independently if called.
 
-# Desktop Tools Configuration (Integration with existing desktop_tools package)
+# Desktop Tools Configuration
 desktop_tools:
-  enabled: true # Whether WuBu can use desktop interaction tools from desktop_tools/
-  # Specific tool configurations can go here if needed (e.g. default browser for web_interaction)
+  enabled: true
+  # context_provider_enabled: true # This is now managed in engine.py based on desktop_tools.enabled
 
 # Logging Configuration
 logging:
-  level: "INFO" # "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"
-  log_file: "wubu.log" # Path to log file (relative to project root), null for console only
+  level: "INFO"
+  log_file: "wubu.log"
   max_log_size_mb: 10
   backup_count: 3
