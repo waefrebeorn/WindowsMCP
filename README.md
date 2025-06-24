@@ -53,7 +53,9 @@
     *   **CUDA Toolkit 12.4**: If you intend to use Zonos TTS with GPU acceleration. Download and install from the [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-12-4-1-download-archive?target_os=Windows&target_arch=x86_64). Ensure it's correctly installed and environment variables (like `CUDA_PATH`) are set.
     *   **eSpeak NG**: A system-level dependency for `phonemizer` (used by Zonos). The `install_uv_qinglong.ps1` script will attempt to download and install `espeak-ng.msi` (version 1.52.0) automatically.
 
-## Setup Instructions
+## Setup Instructions (Windows - Recommended using `install_uv_qinglong.ps1`)
+
+The recommended way to set up WuBu on Windows, especially for using Zonos Local TTS, is via the `install_uv_qinglong.ps1` PowerShell script. This script automates several steps.
 
 1.  **Clone the Repository**:
     ```bash

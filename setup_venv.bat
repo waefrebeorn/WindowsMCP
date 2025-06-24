@@ -62,7 +62,8 @@ IF "!MASTER_SCRIPT_EXIT_CODE!" NEQ "0" (
     ECHO [!SCRIPT_NAME!] WuBu Environment Setup finished.
 )
 ECHO.
-ECHO [!SCRIPT_NAME!] Review the output above for details on each step.
+ECHO [!SCRIPT_NAME!] Review the output above for details on the Python environment setup.
+ECHO [!SCRIPT_NAME!] For Zonos Local TTS and advanced features on Windows, it is recommended to use 'install_uv_qinglong.ps1'.
 ENDLOCAL & (
     PAUSE
     EXIT /B %MASTER_SCRIPT_EXIT_CODE%
