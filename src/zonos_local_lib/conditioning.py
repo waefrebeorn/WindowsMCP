@@ -4,8 +4,8 @@ from typing import Any, Literal, Iterable
 import torch
 import torch.nn as nn
 
-from ..config import PrefixConditionerConfig # Adjusted import
-from ..utils import DEFAULT_DEVICE # Adjusted import
+from .config import PrefixConditionerConfig # Corrected import
+from .utils import DEFAULT_DEVICE # Corrected import
 
 
 class Conditioner(nn.Module):
