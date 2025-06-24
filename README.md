@@ -63,17 +63,19 @@ The recommended way to set up WuBu on Windows, especially for using Zonos Local 
     cd <repository_directory>   # Replace <repository_directory>
     ```
 
-2.  **Run the Automated Installation Script**:
-    *   Ensure you have met the PowerShell Execution Policy prerequisite above.
-    *   Right-click on `install_uv_qinglong.ps1` in File Explorer and choose "Run with PowerShell".
-    *   This script will:
-        *   Install `uv` (a fast Python package installer and virtual environment manager).
-        *   Create a Python virtual environment named `.venv` (using Python 3.10 by default, if `uv` needs to create one).
-        *   Install `espeak-ng` system-wide if not already detected.
-        *   Install all Python dependencies from `requirements.txt` using `uv`, including PyTorch with CUDA 12.4 support (if CUDA is set up on your system and you intend to use GPU).
-    *   Review the script's output for any errors.
+2.  **Windows Setup (Recommended)**:
+    *   Ensure you have met the Windows-specific prerequisites listed above (especially PowerShell Execution Policy, MSVC, CUDA if using GPU).
+    *   Run `setup_venv.bat` **as Administrator**.
+        *   You can do this by right-clicking `setup_venv.bat` and choosing "Run as administrator".
+    *   This batch script will then execute the `install_uv_qinglong.ps1` PowerShell script.
+    *   The PowerShell script (`install_uv_qinglong.ps1`) automates:
+        *   Installation of `uv` (a fast Python package manager).
+        *   Creation of a Python virtual environment (`.venv`).
+        *   System-wide installation of `espeak-ng` (for Zonos TTS).
+        *   Installation of all Python dependencies from `requirements.txt` using `uv`, including PyTorch with the correct CUDA version for Zonos.
+    *   Monitor the script output in the console window for any errors or prompts.
 
-3.  **Manual Setup (Alternative, if not using `install_uv_qinglong.ps1` or for non-Windows/custom setups)**:
+3.  **Manual/Cross-Platform Setup (Alternative)**:
     *   Ensure all system prerequisites listed above are met (Python, Git, Tesseract, ffmpeg, and Zonos-specific ones if using Zonos TTS).
     *   Create and activate a Python virtual environment:
         ```bash
