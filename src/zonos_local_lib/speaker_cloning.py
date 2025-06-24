@@ -201,10 +201,14 @@ class ResNet(nn.Module):
         self.conv1 = self.ConvLayer(in_ch, self.in_planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = self.NormLayer(self.in_planes)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, self.in_planes, num_blocks[0], stride=1) # block_id removed
-        self.layer2 = self._make_layer(block, self.in_planes * 2, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, self.in_planes * 4, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, self.in_planes * 8, num_blocks[3], stride=2)
+
+        # Store initial_planes to correctly scale for subsequent layers
+        initial_planes_val = self.in_planes
+
+        self.layer1 = self._make_layer(block, initial_planes_val, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, initial_planes_val * 2, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, initial_planes_val * 4, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, initial_planes_val * 8, num_blocks[3], stride=2)
         # Note: self.in_planes is modified by _make_layer. If using fixed planes for each layer,
         # it should be passed directly, e.g., self.in_planes for layer1, planes_init*2 for layer2, etc.
         # The current way means _make_layer updates self.in_planes based on block.expansion.
@@ -510,7 +514,17 @@ class SpeakerEmbedding(nn.Module): # Wrapper for ResNet293_based model
         if sample_rate != 16000: # Target sample rate for logFbankCal is 16k
             resampler = self._get_resampler(sample_rate, 16000)
             wav = resampler(wav)
-        return wav # wav is now [B, L_resampled] on self.target_device
+
+        # Ensure minimum length for STFT (n_fft for logFbankCal is 512 by default)
+        # This n_fft is hardcoded in logFbankCal's default.
+        # If logFbankCal's n_fft changes, this might need to adapt or get n_fft from featCal.
+        min_len = 512 # Corresponds to n_fft in logFbankCal
+        if wav.shape[-1] < min_len:
+            padding_needed = min_len - wav.shape[-1]
+            wav = torch.nn.functional.pad(wav, (0, padding_needed), mode='constant', value=0)
+            # print(f"DEBUG: Padded waveform from {wav.shape[-1]-padding_needed} to {wav.shape[-1]} samples.")
+
+        return wav # wav is now [B, L_resampled_and_padded] on self.target_device
 
     def forward(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor: # wav: Host tensor
         # Prepare input handles device placement and resampling
