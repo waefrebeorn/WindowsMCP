@@ -289,7 +289,8 @@ class ResNet293_based(nn.Module):
         # ResNet293 will have feat_dim="2d", in_ch=1 (for single channel spectrogram) by default
         # kwargs for ResNet293 might include these if different.
         # The `in_planes_resnet` is the number of channels after ResNet's conv1.
-        self.front = ResNet293(in_planes=in_planes_resnet, feat_dim=kwargs.get("feat_dim", "2d"), in_ch=kwargs.get("in_ch",1))
+        # Forcing in_ch to 1, as the input spectrogram after unsqueeze should have 1 channel.
+        self.front = ResNet293(in_planes=in_planes_resnet, feat_dim=kwargs.get("feat_dim", "2d"), in_ch=1)
 
         block_expansion = SimAMBasicBlock.expansion # This is 1
 
@@ -323,8 +324,14 @@ class ResNet293_based(nn.Module):
 
     def forward(self, x): # x is raw waveform [B, L_wav] or [L_wav]
         x = self.featCal(x) # x becomes [B, Mel_bins, T_frames]
+        print(f"[DEBUG SpeakerCloning] Shape after self.featCal(x): {x.shape if hasattr(x, 'shape') else type(x)}")
+
         # ResNet293 (2D conv) expects [B, C_in, H, W]. Here C_in=1.
-        x = self.front(x.unsqueeze(dim=1)) # x becomes [B, 1, Mel_bins, T_frames] -> ResNet output [B, C_out, Mel_bins/8, T_frames/8]
+        # x.unsqueeze(dim=1) changes [B, M, T] to [B, 1, M, T]
+        x_for_resnet = x.unsqueeze(dim=1)
+        print(f"[DEBUG SpeakerCloning] Shape after x.unsqueeze(dim=1): {x_for_resnet.shape if hasattr(x_for_resnet, 'shape') else type(x_for_resnet)}")
+
+        x = self.front(x_for_resnet) # x becomes [B, 1, Mel_bins, T_frames] -> ResNet output [B, C_out, Mel_bins/8, T_frames/8]
         x = self.pooling(x) # ASP output [B, pooling.out_dim_calculated]
         if self.drop:
             x = self.drop(x)
