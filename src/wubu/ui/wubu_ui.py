@@ -77,8 +77,8 @@ class WubuApp(ctk.CTk):
             # The engine should have tts_manager
             zonos_engine_instance = None
             if self.engine and self.engine.tts_manager:
-                from ..tts.tts_engine_manager import ZONOS_ENGINE_ID # Safe to import here
-                zonos_engine_instance = self.engine.tts_manager.get_engine(ZONOS_ENGINE_ID)
+                from ..tts.tts_engine_manager import ZONOS_LOCAL_ENGINE_ID # Use ZONOS_LOCAL_ENGINE_ID
+                zonos_engine_instance = self.engine.tts_manager.get_engine(ZONOS_LOCAL_ENGINE_ID)
 
             # Pass the engine instance to the dashboard window if available
             self.zonos_dashboard_window = ZonosDashboardWindow(self, config=self.config, zonos_engine_override=zonos_engine_instance)
