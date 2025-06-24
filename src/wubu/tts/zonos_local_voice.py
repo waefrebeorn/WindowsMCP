@@ -12,9 +12,17 @@ from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 
 # Attempt to import the local Zonos library components
 try:
+    print("[DEBUG_ZLV] Attempting to import Zonos from src.zonos_local_lib.model...")
     from src.zonos_local_lib.model import Zonos
+    print("[DEBUG_ZLV] Successfully imported Zonos.")
+
+    print("[DEBUG_ZLV] Attempting to import make_cond_dict from src.zonos_local_lib.conditioning...")
     from src.zonos_local_lib.conditioning import make_cond_dict #, supported_language_codes (not directly used by engine)
+    print("[DEBUG_ZLV] Successfully imported make_cond_dict.")
+
+    print("[DEBUG_ZLV] Attempting to import DEFAULT_DEVICE from src.zonos_local_lib.utils...")
     from src.zonos_local_lib.utils import DEFAULT_DEVICE as ZONOS_DEFAULT_DEVICE
+    print("[DEBUG_ZLV] Successfully imported DEFAULT_DEVICE.")
 except ImportError as e:
     print(f"ERROR: ZonosLocalVoice - Failed to import local Zonos library: {e}. Ensure zonos_local_lib is correctly placed and importable.")
     # This is a critical error for this engine.
