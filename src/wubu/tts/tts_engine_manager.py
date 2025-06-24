@@ -9,7 +9,6 @@ from .base_tts_engine import BaseTTSEngine, TTSPlaybackSpeed
 from .zonos_local_voice import ZonosLocalVoice # NEW Local Zonos
 
 # Define conceptual IDs for the Zonos engines
-ZONOS_DOCKER_ENGINE_ID = "zonos_engine_docker_cloning" # For old Docker one, if kept temporarily
 ZONOS_LOCAL_ENGINE_ID = "zonos_engine_local_cloning"
 
 
@@ -169,17 +168,14 @@ class TTSEngineManager:
         # This method might return an empty list or conceptual info if Zonos is the only engine.
         all_voices = []
         for engine_id, engine_instance in self.engines.items():
-            voices_from_engine = engine_instance.get_available_voices() # Zonos returns []
-            for voice_info in voices_from_engine:
-                if isinstance(voice_info, dict): # Should not happen for Zonos
-                    all_voices.append(voice_info)
-        if ZONOS_ENGINE_ID in self.engines and not all_voices:
-            # If ZonosLocalVoice is loaded, its get_available_voices will be called.
-            # That method already returns a conceptual entry.
-            # This specific append might be redundant if ZonosLocalVoice is the only one.
-            # Let's refine: if only ZONOS_LOCAL_ENGINE_ID is present and it returned its conceptual voice.
-            pass # ZonosLocalVoice.get_available_voices() handles its own conceptual entry.
+            voices_from_engine = engine_instance.get_available_voices()
+            # voices_from_engine for ZonosLocalVoice returns a list with one conceptual dict.
+            # For other potential engines, it might return a list of actual voice dicts.
+            all_voices.extend(voices_from_engine)
 
+        # The ZonosLocalVoice already adds its conceptual voice entry.
+        # No need for the specific check that was here before using an undefined ZONOS_ENGINE_ID.
+        # If other engines are added, their get_available_voices() should also return a list of dicts.
         return all_voices
 
 if __name__ == '__main__':

@@ -7,17 +7,40 @@ profile: "default"
 
 # TTS (Text-to-Speech) Configuration
 tts:
-  default_voice: "zonos_engine_cloning_service" # Must match ZONOS_ENGINE_ID in TTSEngineManager
+  default_voice: "zonos_engine_local_cloning" # Default to local Zonos engine
   estimated_max_speech_duration: 7
 
-  # Configuration for ZonosVoice (Docker-based, high-quality, voice cloning)
-  zonos_voice_engine:
-    enabled: true # Ensure this is true to use Zonos
-    language: "en"
-    zonos_docker_image: "wubu_zonos_image" # Make sure this matches the built Docker image name
-    zonos_model_name_in_container: "Zyphra/Zonos-v0.1-transformer"
-    device_in_container: "cpu" # Change to "cuda" if Docker GPU passthrough is configured
-    default_reference_audio_path: "" # Optional: path to a .wav for default voice cloning.
+  # Configuration for ZonosLocalVoice (Local Zonos, high-quality, voice cloning)
+  # Requires successful setup of Zonos dependencies (Python packages, eSpeak-NG, CUDA if using GPU).
+  zonos_local_engine:
+    enabled: true # Set to true to enable Local Zonos TTS
+    language: 'en' # Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
+    model_id: "Zyphra/Zonos-v0.1-transformer" # Hugging Face model ID or local path
+    device: "cpu" # Change to "cuda" for GPU acceleration if available and configured.
+                   # Ensure CUDA environment (e.g., CUDA 12.4 for Zonos) is correctly set up.
+    default_reference_audio_path: "" # Optional: e.g., "assets/voices/my_local_speaker.wav"
+    # unconditional_keys: ["emotion"] # Default in ZonosLocalVoice
+    # cfg_scale: 2.0
+    # sampling_params:
+    #   min_p: 0.1
+
+  # Configuration for WubuGLaDOSStyleVoice (Coqui XTTSv2 based characteristic voice)
+  # To use this, set default_voice: "WuBu-GLaDOS-Style" and ensure enabled: true
+  wubu_glados_style_voice:
+    enabled: false # Disabled by default if Zonos is the primary
+    language: 'en'
+    model_subdir: 'glados_tts_models'
+    speaker_wav_filename: 'glados_reference.wav'
+    use_gpu: true
+
+  # Configuration for WubuKokoroVoice (Standard/Neutral voice)
+  # To use this, set default_voice: "WuBu-Kokoro" and ensure enabled: true
+  wubu_kokoro_voice:
+    enabled: false # Disabled by default if Zonos is the primary
+    engine_type: 'coqui'
+    language: 'en'
+    coqui_model_name: "tts_models/en/ljspeech/tacotron2-DDC"
+    use_gpu: true
 
 # ASR (Automatic Speech Recognition) Configuration
 asr:
