@@ -32,7 +32,16 @@ class logFbankCal(nn.Module):
     def forward(self, x):
         out = self.fbankCal(x)
         out = torch.log(out + 1e-6)
-        out = out - out.mean(axis=2).unsqueeze(dim=2) # PyTorch 2.x: mean(dim=2)
+        # Normalize along the time dimension (last dimension)
+        # Using keepdim=True ensures broadcast compatibility for subtraction
+        if out.ndim == 3 and out.shape[-1] > 0: # Ensure there's a time dimension to take mean from
+            out = out - out.mean(dim=-1, keepdim=True)
+        elif out.ndim == 2: # Potentially [Batch, Mels] if time dim was 1 and squeezed by fbankCal (unlikely for MelSpectrogram)
+            # Or if input was just [Mels, Time] and batch was squeezed.
+            # This case is less likely with typical batch processing.
+            # If it's [Batch, Mels] because time was 1, then mean over time is just the values themselves.
+            # No normalization needed or it's ill-defined for a single time frame.
+            pass # Or print a warning: print(f"Skipping mean normalization for 2D tensor: {out.shape}")
         return out
 
 
@@ -43,15 +52,17 @@ class ASP(nn.Module):
         outmap_size = int(acoustic_dim / 8)
         # self.out_dim = in_planes * 8 * outmap_size * 2 # This variable is defined but not used in __init__
 
+        expected_attention_input_channels = in_planes * outmap_size
         self.attention = nn.Sequential(
-            nn.Conv1d(in_planes * 8 * outmap_size, 128, kernel_size=1),
+            nn.Conv1d(expected_attention_input_channels, 128, kernel_size=1),
             nn.ReLU(),
             nn.BatchNorm1d(128),
-            nn.Conv1d(128, in_planes * 8 * outmap_size, kernel_size=1),
+            nn.Conv1d(128, expected_attention_input_channels, kernel_size=1), # Output of attention should match its input features
             nn.Softmax(dim=2),
         )
         # Storing out_dim for potential external use, if needed by other parts of a model.
-        self.out_dim_calculated = in_planes * 8 * outmap_size * 2
+        # mu and sg are concatenated, each having expected_attention_input_channels
+        self.out_dim_calculated = expected_attention_input_channels * 2
 
 
     def forward(self, x):
