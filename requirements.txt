@@ -35,5 +35,5 @@ inflect
 kanjize
 phonemizer # Requires espeak-ng system library
 SudachiPy
-SudachiDict-core # Dictionary for SudachiPy
+sudachidict_full # Dictionary for SudachiPy (Zonos requires the full version)
 einops # Often a dependency for transformer models, Zonos might need it

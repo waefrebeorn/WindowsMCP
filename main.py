@@ -1,7 +1,78 @@
 # WuBu Main Application Entry Point
-import sys
 import os
+import sys
+import platform # For OS-specific eSpeak path detection
 import signal # For handling Ctrl+C
+
+def _configure_espeak_for_phonemizer():
+    """
+    Attempts to find eSpeak NG library and set PHONEMIZER_ESPEAK_LIBRARY
+    if it's not already set. This helps phonemizer locate eSpeak, especially on Windows.
+    """
+    if "PHONEMIZER_ESPEAK_LIBRARY" in os.environ:
+        print(f"INFO: PHONEMIZER_ESPEAK_LIBRARY is already set: {os.environ['PHONEMIZER_ESPEAK_LIBRARY']}")
+        return
+
+    espeak_ng_lib_path = None
+    system = platform.system()
+
+    if system == "Windows":
+        # Common installation paths for eSpeak NG MSI
+        # install_uv_qinglong.ps1 installs to "C:\Program Files\eSpeak NG"
+        prog_files = os.environ.get("ProgramFiles", "C:\\Program Files")
+        prog_files_x86 = os.environ.get("ProgramFiles(x86)", "C:\\Program Files (x86)")
+
+        potential_paths = [
+            os.path.join(prog_files, "eSpeak NG", "libespeak-ng.dll"),
+            os.path.join(prog_files_x86, "eSpeak NG", "libespeak-ng.dll")
+        ]
+        for path_candidate in potential_paths:
+            if os.path.exists(path_candidate):
+                espeak_ng_lib_path = path_candidate
+                break
+
+        if not espeak_ng_lib_path:
+            # Check if espeak-ng.exe is in PATH as a fallback indicator
+            # This doesn't directly give the DLL, but suggests an installation.
+            # Note: os.system("where ...") is Windows specific.
+            if os.system("where espeak-ng > nul 2>&1") == 0:
+                 print("INFO: espeak-ng.exe found in PATH. PHONEMIZER_ESPEAK_LIBRARY not set by WuBu; "
+                       "relying on phonemizer/Zonos internal detection or manual setup if issues persist.")
+            else:
+                 print("WARNING: WuBu could not find eSpeak NG DLL in common Program Files locations, "
+                       "and espeak-ng.exe is not in PATH. Phonemizer (for Zonos TTS) might fail. "
+                       "Ensure eSpeak NG is installed correctly or set PHONEMIZER_ESPEAK_LIBRARY manually.")
+
+    elif system == "Darwin":  # macOS
+        potential_paths = [
+            "/opt/homebrew/lib/libespeak-ng.dylib",  # Apple Silicon Homebrew
+            "/usr/local/lib/libespeak-ng.dylib",     # Intel Macs Homebrew
+            # Add other common paths if necessary
+        ]
+        for path_candidate in potential_paths:
+            if os.path.exists(path_candidate):
+                espeak_ng_lib_path = path_candidate
+                break
+        if not espeak_ng_lib_path:
+            print("WARNING: WuBu could not find eSpeak NG library in common Homebrew locations for macOS. "
+                  "Phonemizer (for Zonos TTS) might fail if PHONEMIZER_ESPEAK_LIBRARY is not set manually.")
+
+    elif system == "Linux":
+        # On Linux, phonemizer usually finds espeak-ng if it's installed system-wide (e.g., via apt).
+        # ctypes.util.find_library can be used, but often requires dev packages.
+        # For now, rely on phonemizer's default behavior on Linux.
+        print("INFO: On Linux, WuBu assumes phonemizer will find eSpeak NG if installed system-wide. "
+              "If Zonos TTS fails, ensure 'espeak-ng' is installed and PHONEMIZER_ESPEAK_LIBRARY can be set if needed.")
+        return # Exit early for Linux, do not attempt to set variable unless known good path
+
+    if espeak_ng_lib_path:
+        os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = espeak_ng_lib_path
+        print(f"INFO: WuBu automatically set PHONEMIZER_ESPEAK_LIBRARY to: {espeak_ng_lib_path}")
+    # else: Warnings for Windows/macOS already printed if not found.
+
+# Call the configuration function at the very start of the application.
+_configure_espeak_for_phonemizer()
+
 
 # Ensure the 'src' directory is in the Python path
 # This allows importing 'wubu' module components correctly
