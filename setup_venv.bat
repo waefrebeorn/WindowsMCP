@@ -1,70 +1,34 @@
 @echo OFF
-SETLOCAL ENABLEDELAYEDEXPANSION
-SET "MASTER_SCRIPT_EXIT_CODE=0"
+SETLOCAL
 SET "SCRIPT_NAME=setup_venv.bat"
 
-ECHO [!SCRIPT_NAME!] Starting WuBu Environment Setup for Windows...
-ECHO [!SCRIPT_NAME!] This script will attempt to run 'install_uv_qinglong.ps1'
-ECHO [!SCRIPT_NAME!] which handles the complete setup including Zonos TTS prerequisites.
+ECHO [!SCRIPT_NAME!] WuBu Environment Setup Information
+ECHO ==================================================
+ECHO.
+ECHO This script previously attempted to automate the full setup.
+ECHO However, to ensure correct permissions and simplify the process,
+ECHO the main environment setup is now handled by 'install_uv_qinglong.ps1'.
+ECHO.
+ECHO PLEASE NOTE:
+ECHO -----------
+ECHO You MUST run the PowerShell script 'install_uv_qinglong.ps1' MANUALLY
+ECHO with Administrator privileges to set up the Python environment,
+ECHO install dependencies (like eSpeak NG for Zonos TTS), and configure other
+ECHO prerequisites.
+ECHO.
+ECHO To do this:
+ECHO 1. Locate 'install_uv_qinglong.ps1' in the project directory.
+ECHO 2. Right-click on 'install_uv_qinglong.ps1'.
+ECHO 3. Select "Run as administrator".
+ECHO 4. Follow any prompts from that script.
+ECHO.
+ECHO This 'setup_venv.bat' script no longer performs these actions directly.
+ECHO Its purpose is now to guide you to use 'install_uv_qinglong.ps1'.
+ECHO.
+ECHO If you have already successfully run 'install_uv_qinglong.ps1' as administrator,
+ECHO your environment should be ready.
 ECHO.
 
-REM Check for Administrator Privileges
-NET SESSION >nul 2>&1
-IF %ERRORLEVEL% NEQ 0 (
-    ECHO [!SCRIPT_NAME!] ERROR: Administrator privileges are required.
-    ECHO [!SCRIPT_NAME!] Please re-run this script as an Administrator.
-    ECHO [!SCRIPT_NAME!] (Right-click -> Run as administrator)
-    SET "MASTER_SCRIPT_EXIT_CODE=1"
-    GOTO :HandleMasterExit
-) ELSE (
-    ECHO [!SCRIPT_NAME!] Administrator privileges detected. Proceeding...
-)
-ECHO.
-
-REM === Execute PowerShell Setup Script ===
-SET "POWERSHELL_SCRIPT_PATH=%~dp0install_uv_qinglong.ps1"
-
-IF NOT EXIST "!POWERSHELL_SCRIPT_PATH!" (
-    ECHO [!SCRIPT_NAME!] ERROR: PowerShell setup script not found at:
-    ECHO [!SCRIPT_NAME!]   !POWERSHELL_SCRIPT_PATH!
-    ECHO [!SCRIPT_NAME!] Please ensure the script exists in the same directory.
-    SET "MASTER_SCRIPT_EXIT_CODE=1"
-    GOTO :HandleMasterExit
-)
-
-ECHO [!SCRIPT_NAME!] Executing PowerShell setup script: !POWERSHELL_SCRIPT_PATH!
-ECHO [!SCRIPT_NAME!] This may take a while. Please be patient and follow any on-screen prompts from the PowerShell script.
-ECHO.
-REM ExecutionPolicy Bypass is used here to ensure the script runs,
-REM though install_uv_qinglong.ps1 itself also tries to install uv using -ExecutionPolicy ByPass for its sub-call.
-powershell.exe -ExecutionPolicy Bypass -File "!POWERSHELL_SCRIPT_PATH!"
-SET "POWERSHELL_EXIT_CODE=!ERRORLEVEL!"
-
-IF "!POWERSHELL_EXIT_CODE!" NEQ "0" (
-    ECHO [!SCRIPT_NAME!] ERROR: PowerShell setup script ('install_uv_qinglong.ps1') failed.
-    ECHO [!SCRIPT_NAME!] Exit Code: !POWERSHELL_EXIT_CODE!
-    ECHO [!SCRIPT_NAME!] Please review the PowerShell script output above for details.
-    SET "MASTER_SCRIPT_EXIT_CODE=!POWERSHELL_EXIT_CODE!"
-) ELSE (
-    ECHO [!SCRIPT_NAME!] PowerShell setup script completed successfully.
-)
-ECHO.
-
-REM === Main Completion ===
-GOTO :HandleMasterExit
-
-REM === Final Exit Point for Master Script ===
-:HandleMasterExit
-ECHO.
-IF "!MASTER_SCRIPT_EXIT_CODE!" NEQ "0" (
-    ECHO [!SCRIPT_NAME!] WuBu Environment Setup finished with errors. Error Code: !MASTER_SCRIPT_EXIT_CODE!
-) ELSE (
-    ECHO [!SCRIPT_NAME!] WuBu Environment Setup finished.
-)
-ECHO.
-ECHO [!SCRIPT_NAME!] Review the output above for details on the Python environment setup.
-ECHO [!SCRIPT_NAME!] For Zonos Local TTS and advanced features on Windows, it is recommended to use 'install_uv_qinglong.ps1'.
-ENDLOCAL & (
-    PAUSE
-    EXIT /B %MASTER_SCRIPT_EXIT_CODE%
-)
+PAUSE
+EXIT /B 0
+ENDLOCAL
