@@ -9,7 +9,8 @@ requests
 pytesseract
 pandas
 transformers
-torch
+torch # For Zonos, ensure this is compatible with CUDA 12.4, see install scripts
+torchaudio # For Zonos, ensure this is compatible with CUDA 12.4, see install scripts
 openai-whisper
 sounddevice
 scipy
@@ -23,6 +24,16 @@ Flask
 PyYAML
 soundfile
 numpy
-torchaudio
 customtkinter
 word2number
+
+# Zonos specific dependencies (and its sub-dependencies)
+huggingface-hub
+tqdm
+safetensors
+inflect
+kanjize
+phonemizer # Requires espeak-ng system library
+SudachiPy
+sudachidict_full # Dictionary for SudachiPy (Zonos requires the full version)
+einops # Often a dependency for transformer models, Zonos might need it
