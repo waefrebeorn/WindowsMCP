@@ -64,44 +64,9 @@ from kanjize import number2kanji
 from phonemizer.backend import EspeakBackend
 from sudachipy import Dictionary, SplitMode
 
-# This will be handled in Step 3 of the plan more robustly.
-# For now, keeping original logic during file creation.
-
-# Set PHONEMIZER_ESPEAK_LIBRARY for different platforms if not already set by environment
-# This code runs when the module is imported.
-if "PHONEMIZER_ESPEAK_LIBRARY" not in os.environ:
-    if sys.platform == "win32":
-        # Standard installation path for eSpeak NG MSI on Windows
-        espeak_ng_dll_path = "C:\\Program Files\\eSpeak NG\\libespeak-ng.dll"
-        if os.path.exists(espeak_ng_dll_path):
-            os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = espeak_ng_dll_path
-            print(f"INFO: Zonos.conditioning - Set PHONEMIZER_ESPEAK_LIBRARY to {espeak_ng_dll_path}", file=sys.stderr)
-        else:
-            # Fallback for older eSpeak or different Program Files location
-            espeak_ng_dll_path_x86 = "C:\\Program Files (x86)\\eSpeak NG\\libespeak-ng.dll"
-            if os.path.exists(espeak_ng_dll_path_x86):
-                os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = espeak_ng_dll_path_x86
-                print(f"INFO: Zonos.conditioning - Set PHONEMIZER_ESPEAK_LIBRARY to {espeak_ng_dll_path_x86}", file=sys.stderr)
-            else:
-                print("WARNING: Zonos.conditioning - PHONEMIZER_ESPEAK_LIBRARY not set and default eSpeak NG DLL paths not found. Phonemizer might fail.", file=sys.stderr)
-    elif sys.platform == "darwin": # macOS
-        # Common path for eSpeak NG installed via Homebrew on Apple Silicon / Intel
-        homebrew_path = None
-        if os.path.exists("/opt/homebrew/lib/libespeak-ng.dylib"): # Apple Silicon
-            homebrew_path = "/opt/homebrew/lib/libespeak-ng.dylib"
-        elif os.path.exists("/usr/local/lib/libespeak-ng.dylib"): # Intel Macs
-            homebrew_path = "/usr/local/lib/libespeak-ng.dylib"
-
-        if homebrew_path:
-            os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = homebrew_path
-            print(f"INFO: Zonos.conditioning - Set PHONEMIZER_ESPEAK_LIBRARY to {homebrew_path}", file=sys.stderr)
-        else:
-            print("WARNING: Zonos.conditioning - PHONEMIZER_ESPEAK_LIBRARY not set for macOS and default Homebrew paths not found. Phonemizer might fail.", file=sys.stderr)
-    # For Linux, phonemizer usually finds it automatically if espeak-ng is installed system-wide.
-    # No explicit setting here unless a specific non-standard path is common.
-else:
-    print(f"INFO: Zonos.conditioning - PHONEMIZER_ESPEAK_LIBRARY is already set to '{os.environ['PHONEMIZER_ESPEAK_LIBRARY']}'. Using that.", file=sys.stderr)
-
+# PHONEMIZER_ESPEAK_LIBRARY configuration is now handled centrally in main.py
+# to ensure it's set before any module (like phonemizer) that might need it is imported.
+# The main.py script calls _configure_espeak_for_phonemizer() at its start.
 
 # --- Number normalization code from https://github.com/daniilrobnikov/vits2/blob/main/text/normalize_numbers.py ---
 

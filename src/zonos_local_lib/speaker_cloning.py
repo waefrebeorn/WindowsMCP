@@ -1,4 +1,5 @@
 import math
+import os # Added missing import
 from functools import cache
 
 import torch
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 import torchaudio
 from huggingface_hub import hf_hub_download
 
-from ..utils import DEFAULT_DEVICE # Adjusted import
+from .utils import DEFAULT_DEVICE # Corrected relative import
 
 
 class logFbankCal(nn.Module):
@@ -31,7 +32,16 @@ class logFbankCal(nn.Module):
     def forward(self, x):
         out = self.fbankCal(x)
         out = torch.log(out + 1e-6)
-        out = out - out.mean(axis=2).unsqueeze(dim=2) # PyTorch 2.x: mean(dim=2)
+        # Normalize along the time dimension (last dimension)
+        # Using keepdim=True ensures broadcast compatibility for subtraction
+        if out.ndim == 3 and out.shape[-1] > 0: # Ensure there's a time dimension to take mean from
+            out = out - out.mean(dim=-1, keepdim=True)
+        elif out.ndim == 2: # Potentially [Batch, Mels] if time dim was 1 and squeezed by fbankCal (unlikely for MelSpectrogram)
+            # Or if input was just [Mels, Time] and batch was squeezed.
+            # This case is less likely with typical batch processing.
+            # If it's [Batch, Mels] because time was 1, then mean over time is just the values themselves.
+            # No normalization needed or it's ill-defined for a single time frame.
+            pass # Or print a warning: print(f"Skipping mean normalization for 2D tensor: {out.shape}")
         return out
 
 
@@ -42,15 +52,17 @@ class ASP(nn.Module):
         outmap_size = int(acoustic_dim / 8)
         # self.out_dim = in_planes * 8 * outmap_size * 2 # This variable is defined but not used in __init__
 
+        expected_attention_input_channels = in_planes * outmap_size
         self.attention = nn.Sequential(
-            nn.Conv1d(in_planes * 8 * outmap_size, 128, kernel_size=1),
+            nn.Conv1d(expected_attention_input_channels, 128, kernel_size=1),
             nn.ReLU(),
             nn.BatchNorm1d(128),
-            nn.Conv1d(128, in_planes * 8 * outmap_size, kernel_size=1),
+            nn.Conv1d(128, expected_attention_input_channels, kernel_size=1), # Output of attention should match its input features
             nn.Softmax(dim=2),
         )
         # Storing out_dim for potential external use, if needed by other parts of a model.
-        self.out_dim_calculated = in_planes * 8 * outmap_size * 2
+        # mu and sg are concatenated, each having expected_attention_input_channels
+        self.out_dim_calculated = expected_attention_input_channels * 2
 
 
     def forward(self, x):
@@ -200,10 +212,14 @@ class ResNet(nn.Module):
         self.conv1 = self.ConvLayer(in_ch, self.in_planes, kernel_size=3, stride=1, padding=1, bias=False)
         self.bn1 = self.NormLayer(self.in_planes)
         self.relu = nn.ReLU(inplace=True)
-        self.layer1 = self._make_layer(block, self.in_planes, num_blocks[0], stride=1) # block_id removed
-        self.layer2 = self._make_layer(block, self.in_planes * 2, num_blocks[1], stride=2)
-        self.layer3 = self._make_layer(block, self.in_planes * 4, num_blocks[2], stride=2)
-        self.layer4 = self._make_layer(block, self.in_planes * 8, num_blocks[3], stride=2)
+
+        # Store initial_planes to correctly scale for subsequent layers
+        initial_planes_val = self.in_planes
+
+        self.layer1 = self._make_layer(block, initial_planes_val, num_blocks[0], stride=1)
+        self.layer2 = self._make_layer(block, initial_planes_val * 2, num_blocks[1], stride=2)
+        self.layer3 = self._make_layer(block, initial_planes_val * 4, num_blocks[2], stride=2)
+        self.layer4 = self._make_layer(block, initial_planes_val * 8, num_blocks[3], stride=2)
         # Note: self.in_planes is modified by _make_layer. If using fixed planes for each layer,
         # it should be passed directly, e.g., self.in_planes for layer1, planes_init*2 for layer2, etc.
         # The current way means _make_layer updates self.in_planes based on block.expansion.
@@ -273,7 +289,8 @@ class ResNet293_based(nn.Module):
         # ResNet293 will have feat_dim="2d", in_ch=1 (for single channel spectrogram) by default
         # kwargs for ResNet293 might include these if different.
         # The `in_planes_resnet` is the number of channels after ResNet's conv1.
-        self.front = ResNet293(in_planes=in_planes_resnet, feat_dim=kwargs.get("feat_dim", "2d"), in_ch=kwargs.get("in_ch",1))
+        # Forcing in_ch to 1, as the input spectrogram after unsqueeze should have 1 channel.
+        self.front = ResNet293(in_planes=in_planes_resnet, feat_dim=kwargs.get("feat_dim", "2d"), in_ch=1)
 
         block_expansion = SimAMBasicBlock.expansion # This is 1
 
@@ -307,8 +324,14 @@ class ResNet293_based(nn.Module):
 
     def forward(self, x): # x is raw waveform [B, L_wav] or [L_wav]
         x = self.featCal(x) # x becomes [B, Mel_bins, T_frames]
+        print(f"[DEBUG SpeakerCloning] Shape after self.featCal(x): {x.shape if hasattr(x, 'shape') else type(x)}")
+
         # ResNet293 (2D conv) expects [B, C_in, H, W]. Here C_in=1.
-        x = self.front(x.unsqueeze(dim=1)) # x becomes [B, 1, Mel_bins, T_frames] -> ResNet output [B, C_out, Mel_bins/8, T_frames/8]
+        # x.unsqueeze(dim=1) changes [B, M, T] to [B, 1, M, T]
+        x_for_resnet = x.unsqueeze(dim=1)
+        print(f"[DEBUG SpeakerCloning] Shape after x.unsqueeze(dim=1): {x_for_resnet.shape if hasattr(x_for_resnet, 'shape') else type(x_for_resnet)}")
+
+        x = self.front(x_for_resnet) # x becomes [B, 1, Mel_bins, T_frames] -> ResNet output [B, C_out, Mel_bins/8, T_frames/8]
         x = self.pooling(x) # ASP output [B, pooling.out_dim_calculated]
         if self.drop:
             x = self.drop(x)
@@ -509,7 +532,17 @@ class SpeakerEmbedding(nn.Module): # Wrapper for ResNet293_based model
         if sample_rate != 16000: # Target sample rate for logFbankCal is 16k
             resampler = self._get_resampler(sample_rate, 16000)
             wav = resampler(wav)
-        return wav # wav is now [B, L_resampled] on self.target_device
+
+        # Ensure minimum length for STFT (n_fft for logFbankCal is 512 by default)
+        # This n_fft is hardcoded in logFbankCal's default.
+        # If logFbankCal's n_fft changes, this might need to adapt or get n_fft from featCal.
+        min_len = 512 # Corresponds to n_fft in logFbankCal
+        if wav.shape[-1] < min_len:
+            padding_needed = min_len - wav.shape[-1]
+            wav = torch.nn.functional.pad(wav, (0, padding_needed), mode='constant', value=0)
+            # print(f"DEBUG: Padded waveform from {wav.shape[-1]-padding_needed} to {wav.shape[-1]} samples.")
+
+        return wav # wav is now [B, L_resampled_and_padded] on self.target_device
 
     def forward(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor: # wav: Host tensor
         # Prepare input handles device placement and resampling

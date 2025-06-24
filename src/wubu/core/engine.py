@@ -3,7 +3,7 @@
 # TTS, ASR (SpeechListener), LLM processing, and UI interactions.
 
 import json # Added for tool call argument/result processing
-from ..tts.tts_engine_manager import TTSEngineManager, ZONOS_ENGINE_ID # Import ZONOS_ENGINE_ID for use
+from ..tts.tts_engine_manager import TTSEngineManager, ZONOS_LOCAL_ENGINE_ID # Use ZONOS_LOCAL_ENGINE_ID
 from ..asr.speech_listener import SpeechListener # Import SpeechListener
 from .llm_processor import LLMProcessor # Corrected import
 from ..ui.wubu_ui import WubuApp # Actual class name for type hinting
