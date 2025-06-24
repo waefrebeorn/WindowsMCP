@@ -25,12 +25,13 @@
     *   **Activation Phrases**: Activate WuBu by saying "WuBu", "Hey WuBu", "Yo WuBu", "WooBoo", or "WuhBoo" followed by your command when using voice input mode (`--voice`).
     *   Speech-to-Text (STT): Uses local Whisper models for accurate transcription.
     *   Text-to-Speech (TTS): Provides spoken responses using various engines:
-        *   Default: `pyttsx3` (basic, system-dependent voices).
-        *   Advanced: **Zonos TTS** (via Docker) for high-quality, clonable voices.
-        *   Other engines like GLaDOS-style and Kokoro are also available.
+        *   **Zonos TTS (Local)**: High-quality, voice cloning TTS now runs locally (recommended for Windows).
+        *   Coqui XTTSv2 based: GLaDOS-style voice.
+        *   Coqui TTS based: Kokoro (neutral voice).
+        *   Basic system voices: via `pyttsx3` (if others are disabled).
 *   **LLM Integration**: Supports Google Gemini (via API) and local LLMs (e.g., Llama, Phi, Qwen) through Ollama for natural language understanding and tool orchestration.
 *   **Command-Line Interface**: Allows users to type commands or use voice to interact with their desktop.
-*   **Configurable**: Settings for API keys, model names, and behavior can be managed through `config.json` and `.env` files.
+*   **Configurable**: Settings for API keys, model names, and behavior can be managed through `wubu_config.yaml` and `.env` files.
 
 ## Prerequisites
 
@@ -38,19 +39,23 @@
 *   **Git**: For cloning the repository.
 *   **Tesseract OCR**: Required for the `find_text_on_screen_and_click` tool and other precise text-location tasks.
     *   Installation instructions: [Tesseract OCR Documentation](https://tesseract-ocr.github.io/tessdoc/Installation.html)
-    *   Ensure Tesseract is added to your system's PATH. Alternatively, you can set the `TESSERACT_CMD_PATH` in your `config.json` to the full path of the Tesseract executable if it's not in your PATH or you need to specify a particular installation.
+    *   Ensure Tesseract is added to your system's PATH. Alternatively, you can set the `TESSERACT_CMD_PATH` in your `wubu_config.yaml` (under a relevant section, e.g., `vision` or a new `ocr_settings`) to the full path of the Tesseract executable if it's not in your PATH or you need to specify a particular installation. (Note: Check `config_template.yaml` for exact structure if adding this).
 *   **Ollama**: (Optional, if using local LLMs/Moondream) Install from [ollama.com](https://ollama.com).
 *   **ffmpeg**: (Required by `openai-whisper`) A cross-platform solution to record, convert and stream audio and video.
     *   Linux: `sudo apt update && sudo apt install ffmpeg`
     *   macOS: `brew install ffmpeg`
     *   Windows: Download from [ffmpeg.org](https://ffmpeg.org/download.html) and add to PATH, or via Chocolatey: `choco install ffmpeg`
-*   **psutil**: (Required for System Monitoring tools) `pip install psutil` (this will be handled by `requirements.txt`).
-*   **Docker Desktop**: (Required for Zonos TTS)
-    *   Download and install Docker Desktop for Windows from [https://www.docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop).
-    *   Ensure Docker Desktop is running after installation. **This is crucial before running `setup_venv.bat` for Zonos setup.**
-    *   The `setup_venv.bat` script will check for Docker. If found and running, it will attempt to clone the Zonos repository (if not already present in a `Zonos_src` subdirectory) and then build a local Docker image named `wubu_zonos_image` using Zonos's own Dockerfile. This image is then used by WuBu for Zonos TTS.
+*   **psutil**: (Required for System Monitoring tools) `pip install psutil` (this is handled by `install_uv_qinglong.ps1` via `requirements.txt`).
+*   **For Local Zonos TTS (High-Quality Voice Cloning on Windows):**
+    *   **Windows Operating System**: Zonos local TTS setup is currently focused on Windows.
+    *   **PowerShell Execution Policy**: Needs to be set to `Unrestricted` to allow setup scripts to run. Open PowerShell as Administrator and run: `Set-ExecutionPolicy Unrestricted` (and choose 'A' for Yes to All).
+    *   **MSVC (Visual Studio C++ Build Tools)**: Required for compiling some Python dependencies. Install Visual Studio 2022 (Community edition is fine) with the "Desktop development with C++" workload.
+    *   **CUDA Toolkit 12.4**: If you intend to use Zonos TTS with GPU acceleration. Download and install from the [NVIDIA CUDA Toolkit Archive](https://developer.nvidia.com/cuda-12-4-1-download-archive?target_os=Windows&target_arch=x86_64). Ensure it's correctly installed and environment variables (like `CUDA_PATH`) are set.
+    *   **eSpeak NG**: A system-level dependency for `phonemizer` (used by Zonos). The `install_uv_qinglong.ps1` script will attempt to download and install `espeak-ng.msi` (version 1.52.0) automatically.
 
-## Setup Instructions
+## Setup Instructions (Windows - Recommended using `install_uv_qinglong.ps1`)
+
+The recommended way to set up WuBu on Windows, especially for using Zonos Local TTS, is via the `install_uv_qinglong.ps1` PowerShell script. This script automates several steps.
 
 1.  **Clone the Repository**:
     ```bash
@@ -58,70 +63,68 @@
     cd <repository_directory>   # Replace <repository_directory>
     ```
 
-2.  **Create and Activate Python Virtual Environment**:
-    ```bash
-    python -m venv venv
-    ```
-    Activate:
-    *   Windows: `.\venv\Scripts\activate`
-    *   macOS/Linux: `source venv/bin/activate`
+2.  **Run the Automated Installation Script**:
+    *   Ensure you have met the PowerShell Execution Policy prerequisite above.
+    *   Right-click on `install_uv_qinglong.ps1` in File Explorer and choose "Run with PowerShell".
+    *   This script will:
+        *   Install `uv` (a fast Python package installer and virtual environment manager).
+        *   Create a Python virtual environment named `.venv` (using Python 3.10 by default, if `uv` needs to create one).
+        *   Install `espeak-ng` system-wide if not already detected.
+        *   Install all Python dependencies from `requirements.txt` using `uv`, including PyTorch with CUDA 12.4 support (if CUDA is set up on your system and you intend to use GPU).
+    *   Review the script's output for any errors.
 
-3.  **Install Dependencies**:
-    ```bash
-    pip install -r requirements.txt
-    ```
-    This installs all necessary Python packages for WuBu's core functionality and various features.
-    The `setup_venv.bat` script also includes checks for Docker. If Docker is running, it will proceed to clone the Zonos source code (into `Zonos_src/`) and build the `wubu_zonos_image` Docker image locally. This process might take some time.
-
-4.  **Configuration**:
-    *   **Copy Example Configuration**:
+3.  **Manual Setup (Alternative, if not using `install_uv_qinglong.ps1` or for non-Windows/custom setups)**:
+    *   Ensure all system prerequisites listed above are met (Python, Git, Tesseract, ffmpeg, and Zonos-specific ones if using Zonos TTS).
+    *   Create and activate a Python virtual environment:
         ```bash
-        cp config.example.json config.json
+        python -m venv .venv
+        # Activate:
+        # Windows: .\.venv\Scripts\activate
+        # macOS/Linux: source .venv/bin/activate
         ```
-    *   **Edit `config.json`**: Review and update the settings:
-        *   `LLM_PROVIDER`: `"gemini"` or `"ollama"`.
-        *   `USE_WINDOWS_SEARCH_INDEX`: (Windows only) `true` or `false`. Defaults to `true`. If true, WuBu will try to use the Windows Search Index for faster file discovery. Falls back to manual scan if disabled or fails.
-        *   (Other settings as before...)
-    *   **Gemini API Key (if using Gemini)**:
-        Create a `.env` file in the project root:
+    *   Install Python dependencies:
+        ```bash
+        pip install -r requirements.txt
+        # For PyTorch with specific CUDA on Windows (e.g., CUDA 12.4 for Zonos):
+        # pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+        ```
+
+4.  **Configuration (`wubu_config.yaml`)**:
+    *   If `wubu_config.yaml` does not exist in the project root, copy `src/wubu/config_template.yaml` to `wubu_config.yaml`.
+        ```bash
+        # Example: cp src/wubu/config_template.yaml wubu_config.yaml (use 'copy' on Windows cmd)
+        copy src\wubu\config_template.yaml wubu_config.yaml
+        ```
+    *   **Edit `wubu_config.yaml`**: Review and update the settings. Key sections:
+        *   `llm`: Configure your LLM provider (e.g., `ollama_settings.model`).
+        *   `tts`: Configure Text-to-Speech. For Zonos Local TTS:
+            ```yaml
+            tts:
+              default_voice: "zonos_engine_local_cloning" # Makes Zonos local the default
+              estimated_max_speech_duration: 7
+
+              zonos_local_engine:
+                enabled: true
+                language: 'en' # Default: "en", supports "ja", "zh", "fr", "de"
+                model_id: "Zyphra/Zonos-v0.1-transformer" # Model to load
+                device: "cpu" # Change to "cuda" for GPU. Ensure CUDA 12.4 is set up.
+                default_reference_audio_path: "" # Optional: path to a .wav for default cloning
+                # unconditional_keys: ["emotion"] # Example: Zonos default
+
+              # Disable other TTS engines if Zonos is the primary one
+              wubu_glados_style_voice:
+                enabled: false
+              wubu_kokoro_voice:
+                enabled: false
+            ```
+        *   Other settings as needed (API keys in `.env`, paths, etc.). Refer to comments in `wubu_config.yaml` or `src/wubu/config_template.yaml`.
+    *   **API Keys (e.g., Gemini)**:
+        If using cloud services like Gemini, create a `.env` file in the project root:
         ```env
         GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
         ```
     *   **Ollama Setup (if using Ollama)**:
         (As before...)
-    *   **Text-to-Speech (TTS) Configuration (including Zonos via Docker)**:
-        WuBu supports multiple TTS engines. You can configure them in the `tts` section of your `config.json` (or `wubu_config.yaml`).
-        To enable Zonos TTS (which runs via Docker):
-        ```json
-        {
-          // ... other configurations ...
-          "tts": {
-            "default_voice": "zonos_engine_cloning_service", // Example: Make Zonos the default TTS engine
-            "zonos_voice_engine": {
-              "enabled": true,
-              "language": "en", // Default language for Zonos (e.g., "en", "ja", "zh", "fr", "de")
-              "zonos_docker_image": "wubu_zonos_image", // Docker image built locally by setup_venv.bat
-              "zonos_model_name_in_container": "Zyphra/Zonos-v0.1-transformer", // Model Zonos library loads inside container
-              "device_in_container": "cpu", // "cpu" or "cuda" (for GPU use inside Docker)
-              "default_reference_audio_path": "path/to_your/host_reference_speaker.wav"
-              // Optional: Host path to a .wav file for default voice cloning.
-              // Use forward slashes (/) or escaped backslashes (\\\\) in JSON for paths.
-            },
-            // ... other TTS engine configurations ...
-            "wubu_glados_style_voice": { "enabled": false },
-            "wubu_kokoro_voice": { "enabled": false }
-          }
-          // ... other configurations ...
-        }
-        ```
-        **Zonos (Docker-based) Configuration Details**:
-        *   `enabled` (boolean): Set to `true` to enable Zonos.
-        *   `language` (string): Default language for Zonos (e.g., "en" maps to "en-us").
-        *   `zonos_docker_image` (string): Should be `"wubu_zonos_image"`. This is the name of the Docker image built locally by the `setup_venv.bat` script from the Zonos repository source.
-        *   `zonos_model_name_in_container` (string): The model name the script inside the Docker container will load using the Zonos library (e.g., `Zyphra/Zonos-v0.1-transformer`). This usually corresponds to a model available within the Zonos ecosystem.
-        *   `device_in_container` (string): Instructs the script inside Docker to use "cpu" or "cuda". If "cuda", WuBu will attempt to pass GPU access to the container. Your Docker setup must support GPU passthrough.
-        *   `default_reference_audio_path` (string, optional): Path on your *host machine* to a `.wav` audio file for the default speaker voice. This file will be mounted into the Docker container during synthesis.
-        *   **Important**: Ensure Docker Desktop is installed and running *before* running `setup_venv.bat` to allow the Zonos image to be built.
     *   **Microphone Access**: Ensure the application has permission to access your microphone for voice input.
 
 ## Running the Assistant
@@ -133,8 +136,8 @@
     ```
     **Command-Line Arguments**:
     *   `--voice`: Enable voice input mode (uses Whisper).
-    *   `--llm_provider {gemini,ollama}`: Override `LLM_PROVIDER` from `config.json`.
-    *   `--ollama_model <model_name>`: (If Ollama) Override `OLLAMA_DEFAULT_MODEL`.
+    *   `--llm_provider {gemini,ollama}`: Override LLM provider settings from `wubu_config.yaml`.
+    *   `--ollama_model <model_name>`: (If Ollama) Override the Ollama model specified in `wubu_config.yaml`.
     *   `--test_command "<command>"`: Execute a single command.
     *   `--test_file <filepath>`: Execute commands from a file.
 
@@ -205,6 +208,10 @@ WuBu has access to a variety of tools to interact with your system:
 13. **WuBu**: Calls `control_active_window` with `action="minimize"`.
 
 ---
-*Several batch scripts (`.bat`) are provided in the repository for common tasks like initial setup (`ollama_setup.bat`, `setup_venv.bat`) and running WuBu (`run_wubu.bat`, `run_ollama_wubu.bat`). While `python main.py` with arguments is the primary way to run WuBu, these scripts can simplify the process.*
-*Please review the batch scripts for any warnings, especially if you intend for WuBu to perform file system modifications.*
+*Various scripts are provided in the repository for common tasks:*
+*   **`install_uv_qinglong.ps1` (Recommended for Windows)**: Automates comprehensive setup including `uv`, Python virtual environment (`.venv`), `espeak-ng`, and all Python dependencies from `requirements.txt` with correct CUDA support for PyTorch. Use this for the full local Zonos TTS experience on Windows.
+*   **`setup_venv.bat` / `setup_python_env.bat`**: Basic Python virtual environment (`venv`) creation and `pip install -r requirements.txt`. Does not handle `espeak-ng` or specific PyTorch CUDA versions needed for Zonos GPU. Suitable for basic setup or non-Windows environments where the PowerShell script is not applicable.
+*   **`ollama_setup.bat`**: Assists with Ollama setup if you're using local LLMs.
+*   **`run_wubu.bat`, `run_ollama_wubu.bat`**: Convenience scripts for running WuBu.
+*Always review scripts before running, especially if they perform installations or modifications.*
 

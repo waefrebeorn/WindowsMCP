@@ -108,8 +108,9 @@ Write-Output "Installing main requirements"
 
 ~/.local/bin/uv pip install --upgrade setuptools wheel
 
-~/.local/bin/uv pip sync requirements-uv.txt --index-strategy unsafe-best-match
-Check "Install main requirements failed"
+# Use the main requirements.txt file now that it has been updated with Zonos dependencies
+~/.local/bin/uv pip install -r requirements.txt
+Check "Install main requirements from requirements.txt failed"
 
 try {
     espeak-ng --version
