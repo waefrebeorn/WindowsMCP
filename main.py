@@ -91,6 +91,15 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+# Cleanse sys.path: Remove <project_root>/src if it's present.
+# This is to prevent issues if PYTHONPATH was set externally to include <project_root>/src,
+# which could lead to incorrect resolution of 'import utils' by third-party libraries
+# as 'src.utils' (looking for a non-existent <project_root>/src/utils.py).
+src_dir_in_path = os.path.join(current_dir, "src")
+if src_dir_in_path in sys.path:
+    print(f"INFO: WuBu is removing potentially problematic path '{src_dir_in_path}' from sys.path.")
+    sys.path.remove(src_dir_in_path)
+
 
 try:
     from src.wubu.core.engine import WuBuEngine

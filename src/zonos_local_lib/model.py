@@ -95,9 +95,9 @@ class Zonos(nn.Module):
         _actual_vocab_size_for_prediction = 1025 # Predicts tokens 0-1024 (EOS is 1024)
         _embedding_size = 1026 # Accommodates token 1025 (MASKED) as input
 
+        # Initialize with unpadded sizes first. Padding will be applied after loading state_dict if necessary.
         self.embeddings = nn.ModuleList([nn.Embedding(_embedding_size, dim) for _ in range(self.autoencoder.num_codebooks)])
         self.heads = nn.ModuleList([nn.Linear(dim, _actual_vocab_size_for_prediction, bias=False) for _ in range(self.autoencoder.num_codebooks)])
-
 
         self._cg_graph = None
         self._cg_batch_size = None
@@ -106,37 +106,14 @@ class Zonos(nn.Module):
         self._cg_inference_params = None
         self._cg_scale = None
 
-        if config.pad_vocab_to_multiple_of:
-            # This hook was for the original model. We are creating from scratch here.
-            # We should apply padding directly if needed.
-            # The `pad_weight_` function pads the weight matrix, not the vocab size parameter.
-            # For nn.Embedding, num_embeddings should be pre-padded.
-            # For nn.Linear, out_features should be pre-padded.
+        # The padding logic using find_multiple and re-initializing layers
+        # has been removed from __init__. It will be handled by the
+        # _pad_embeddings_and_heads method *after* state_dict loading in from_local.
 
-            # Let's ensure the sizes used for construction are padded if specified.
-            # This is slightly different from a post-load hook.
-            # The original hook modified loaded weights. Here we define the layer size.
-
-            # Padded size for embeddings (max input token ID + 1, then padded)
-            padded_embedding_size = find_multiple(_embedding_size, config.pad_vocab_to_multiple_of)
-            # Padded size for head outputs (number of classes to predict, then padded)
-            padded_head_output_size = find_multiple(_actual_vocab_size_for_prediction, config.pad_vocab_to_multiple_of)
-
-            if padded_embedding_size != _embedding_size:
-                print(f"INFO: Padding embedding size from {_embedding_size} to {padded_embedding_size}")
-                self.embeddings = nn.ModuleList([nn.Embedding(padded_embedding_size, dim) for _ in range(self.autoencoder.num_codebooks)])
-
-            if padded_head_output_size != _actual_vocab_size_for_prediction:
-                 print(f"INFO: Padding head output size from {_actual_vocab_size_for_prediction} to {padded_head_output_size}")
-                 self.heads = nn.ModuleList([nn.Linear(dim, padded_head_output_size, bias=False) for _ in range(self.autoencoder.num_codebooks)])
-        # else:
-            # self.register_load_state_dict_post_hook(self._pad_embeddings_and_heads) # Keep if loading pretrained still
-            # For now, local Zonos means we define its structure.
-
-    def _pad_embeddings_and_heads(self, *args, **kwargs): # This is a load_state_dict_post_hook
-        # This function is for loading pretrained models that might not have padded vocab.
-        # If we are defining the model locally and using it, padding should be handled at init.
-        # However, if from_pretrained is still used to load external safetensors, this is relevant.
+    def _pad_embeddings_and_heads(self, *args, **kwargs): # This is a load_state_dict_post_hook (or can be called manually)
+        # This function is for loading pretrained models that might not have padded vocab,
+        # or for applying padding after initial weight loading.
+        # It modifies layers in-place.
         for w_emb in self.embeddings:
             pad_weight_(w_emb, self.config.pad_vocab_to_multiple_of)
         for w_head in self.heads:

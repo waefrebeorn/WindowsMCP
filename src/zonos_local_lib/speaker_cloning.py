@@ -1,4 +1,5 @@
 import math
+import os # Added missing import
 from functools import cache
 
 import torch
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 import torchaudio
 from huggingface_hub import hf_hub_download
 
-from ..utils import DEFAULT_DEVICE # Adjusted import
+from .utils import DEFAULT_DEVICE # Corrected relative import
 
 
 class logFbankCal(nn.Module):
