@@ -309,35 +309,16 @@ class ZonosDashboardWindow(ctk.CTkToplevel):
 
         self.zonos_engine = zonos_engine_override
 
-        if not self.zonos_engine: # Only try fallback if override was None from WubuApp
-            print("ZonosDashboard: WARNING - Zonos engine not passed from main app. Attempting direct init as fallback.")
-            from ..tts.zonos_voice import ZonosVoice # Keep import local to fallback
-
-            zonos_config_section = self.config.get('tts', {}).get('zonos_voice_engine', {})
-            if zonos_config_section.get('enabled', False):
-                try:
-                    # Create a new ZonosVoice instance for the dashboard only
-                    fallback_engine = ZonosVoice(
-                        language=zonos_config_section.get('language', 'en'),
-                        default_voice=zonos_config_section.get('default_reference_audio_path'),
-                        config=zonos_config_section
-                    )
-                    # Check the correct attribute for Docker-based Zonos
-                    if hasattr(fallback_engine, 'is_docker_ok') and fallback_engine.is_docker_ok:
-                        self.zonos_engine = fallback_engine # Use this fallback instance
-                        print("ZonosDashboard: Fallback direct init of ZonosVoice successful.")
-                    else:
-                        print("ZonosDashboard: Fallback direct init of ZonosVoice failed (Docker not OK or instance issue).")
-                        self.zonos_engine = None # Ensure it's None if fallback fails
-                except Exception as e:
-                    print(f"ZonosDashboard: Error during fallback direct init of ZonosVoice: {e}")
-                    self.zonos_engine = None
-            else:
-                print("ZonosDashboard: Zonos is not enabled in config for fallback direct init (config section has enabled:false or missing).")
+        # Fallback logic to old Docker-based ZonosVoice has been removed.
+        # The dashboard now relies solely on the zonos_engine_override (ZonosLocalVoice)
+        # passed from the main application.
+        if not self.zonos_engine:
+            print("ZonosDashboard: ZonosLocalVoice engine instance was not provided or failed to initialize in the main app.")
+            # The following existing 'if not self.zonos_engine:' block will handle UI indication.
 
         if not self.zonos_engine:
             self.title("Zonos TTS (Engine Error)")
-            label = ctk.CTkLabel(self, text="Zonos TTS Engine not available or failed to load.\nPlease check configuration and ensure Zonos & eSpeak NG are installed.")
+            label = ctk.CTkLabel(self, text="Zonos TTS Engine not available or failed to load.\nPlease check main application logs and configuration.")
             label.pack(padx=20, pady=20)
             self.after(100, self.focus) # Ensure it gets focus to show message
             return # Don't build the rest of the UI
