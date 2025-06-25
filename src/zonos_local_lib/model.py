@@ -328,7 +328,7 @@ class Zonos(nn.Module):
         batch_size: int = 1, # This is B_orig (original batch size before any CFG duplication)
         sampling_params: dict = None, # Uses dict(min_p=0.1) if None
         progress_bar: bool = True,
-        disable_torch_compile: bool = False, # Reference has False, current has True
+        disable_torch_compile: bool = True, # Temporarily disable torch.compile to bypass Inductor error
         callback: Callable[[torch.Tensor, int, int], bool] | None = None,
     ):
         # Aligning with reference zonos/model.py generate method
