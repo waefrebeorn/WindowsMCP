@@ -137,6 +137,7 @@ class ZonosLocalVoice(BaseTTSEngine):
         try:
             print(f"ZonosLocalVoice: Generating new speaker embedding for: {reference_audio_path}")
             wav, sr = torchaudio.load(reference_audio_path)
+            print(f"ZonosLocalVoice: Loaded reference audio '{reference_audio_path}'. Shape: {wav.shape}, Sample Rate: {sr}") # DEBUG PRINT
             # make_speaker_embedding expects wav on its internal device, returns on model's device
             embedding = self.zonos_model.make_speaker_embedding(wav, sr) # Returns on self.target_device
 
