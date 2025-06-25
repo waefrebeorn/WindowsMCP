@@ -62,21 +62,48 @@ class TorchZonosBackbone(nn.Module):
         self.norm_f = nn.LayerNorm(config.d_model, eps=config.norm_epsilon)
 
     def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16):
-        # TODO: This function should be pure
         head_dim = self.config.d_model // self.config.attn_cfg["num_heads"]
-        self.freqs_cis = precompute_freqs_cis(16384, head_dim)
+
+        # Determine the target device from an existing parameter of the module
+        module_device = self.norm_f.weight.device
+
+        # Compute freqs_cis on CPU then move to target device if not already there or on correct device
+        # Check if it needs recomputation or moving (e.g. if device changed or not initialized)
+        if not hasattr(self, 'freqs_cis') or self.freqs_cis.device != module_device or self.freqs_cis.shape[0] < 16384 : # check size too
+            # Max sequence length for RoPE is often fixed (e.g., 16384 or a large value from config)
+            cpu_freqs_cis = precompute_freqs_cis(16384, head_dim) # This is on CPU
+            self.freqs_cis = cpu_freqs_cis.to(module_device)
+
         return {
-            i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype)
+            i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, device=module_device) # Pass device
             for i, layer in enumerate(self.layers)
         }
 
     def forward(self, hidden_states: torch.Tensor, inference_params: InferenceParams) -> torch.Tensor:
-        input_pos = torch.arange(0, hidden_states.shape[1], device=hidden_states.device)
-        input_pos = input_pos + inference_params.lengths_per_sample.unsqueeze(-1)
+        current_device = hidden_states.device
+        current_seq_len = hidden_states.shape[1]
+        start_pos = inference_params.seqlen_offset
 
-        freqs_cis = self.freqs_cis[input_pos].expand(hidden_states.shape[0], -1, -1, -1)
+        # Create positions for the current sequence segment for RoPE
+        # Ensure positions are created on the same device as self.freqs_cis for indexing
+        # self.freqs_cis is expected to be on module_device (e.g., cuda if model is on cuda)
+        if not hasattr(self, 'freqs_cis'):
+            # This should not happen if allocate_inference_cache was called, which is a prerequisite
+            # for forward with inference_params.
+            raise RuntimeError("freqs_cis not initialized. Call allocate_inference_cache first.")
+
+        positions = torch.arange(start_pos, start_pos + current_seq_len, device=self.freqs_cis.device)
+
+        # Slice self.freqs_cis to get frequencies for the current range of positions
+        # freqs_cis_for_layer will have shape [current_seq_len, num_rope_features, 2]
+        freqs_cis_for_layer = self.freqs_cis[positions]
+
+        # Ensure freqs_cis_for_layer is on the same device as hidden_states if different
+        # (though self.freqs_cis should already be on current_device via allocate_inference_cache logic)
+        freqs_cis_for_layer = freqs_cis_for_layer.to(current_device)
+
         for i, layer in enumerate(self.layers):
-            hidden_states = layer(hidden_states, inference_params, freqs_cis)
+            hidden_states = layer(hidden_states, inference_params, freqs_cis_for_layer)
         return self.norm_f(hidden_states)
 
 
@@ -93,8 +120,8 @@ class TransformerBlock(nn.Module):
         self.num_heads_kv = config.attn_cfg["num_heads_kv"]
         self.head_dim = config.d_model // config.attn_cfg["num_heads"]
 
-    def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16):
-        return torch.empty(batch_size, max_seqlen, 2, self.num_heads_kv, self.head_dim, dtype=dtype), None
+    def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16, device: torch.device = None):
+        return torch.empty(batch_size, max_seqlen, 2, self.num_heads_kv, self.head_dim, dtype=dtype, device=device), None
 
     def forward(self, x: torch.Tensor, inference_params: InferenceParams, freqs_cis: torch.Tensor) -> torch.Tensor:
         x = x + self.mixer(self.norm(x), inference_params, freqs_cis)
