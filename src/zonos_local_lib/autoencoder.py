@@ -92,3 +92,4 @@ class DACAutoencoder:
         reconstructed_audio_padded = self.dac_model.decode(z_q)
 
         return reconstructed_audio_padded.float() # Ensure float output, shape [B, 1, L]
+
