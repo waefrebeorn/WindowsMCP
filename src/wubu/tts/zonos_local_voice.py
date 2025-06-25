@@ -194,8 +194,33 @@ class ZonosLocalVoice(BaseTTSEngine):
         }
 
         try:
-            cond_dict = make_cond_dict(**cond_params)
-            conditioning = self.zonos_model.prepare_conditioning(cond_dict) # CFG handled inside if uncond_dict is passed by make_cond_dict logic
+            # Create conditional dictionary
+            # Assuming make_cond_dict itself doesn't return two dicts, we prepare them for Zonos.prepare_conditioning
+            main_cond_dict = make_cond_dict(**cond_params)
+
+            uncond_dict_for_prepare = None
+            if cfg_active:
+                # Create parameters for the unconditional dictionary
+                uncond_params = cond_params.copy()
+                # Nullify specified keys for the unconditional pass
+                # Note: make_cond_dict might also use its 'unconditional_keys' argument to do this internally
+                # if it's designed to produce an uncond_dict. If it only produces one dict based on input,
+                # then we must modify its inputs.
+
+                # Example of nullifying:
+                if "speaker" in unconditional_keys_cfg: # unconditional_keys_cfg is a set
+                    uncond_params['speaker'] = None
+                if "emotion" in unconditional_keys_cfg:
+                     # Using a generic or average emotion; Zonos's make_cond_dict might have specific defaults
+                    uncond_params['emotion'] = [0.125] * 8 # Example neutral emotion for 8 emotion categories
+                # If "text" were in unconditional_keys_cfg, one might set:
+                # uncond_params['text'] = "" # Or specific null text handling for Zonos
+
+                # Re-call make_cond_dict with modified params for unconditional part
+                uncond_dict_for_prepare = make_cond_dict(**uncond_params)
+
+            # Pass both dictionaries to prepare_conditioning
+            conditioning = self.zonos_model.prepare_conditioning(main_cond_dict, uncond_dict_for_prepare)
 
             # TODO: Handle audio_prefix_codes similar to Gradio if needed
             # audio_prefix_codes = None
