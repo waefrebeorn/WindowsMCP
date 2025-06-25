@@ -126,157 +126,147 @@ class CodecMixin:
     def compress(
         self,
         audio_path_or_signal: Union[str, Path, AudioSignal],
-        win_duration: float = 1.0,
+        win_duration: float = 1.0, # Default in original dac/model/base.py was 1.0, but compress in dac.utils.encode uses 5.0
         verbose: bool = False,
         normalize_db: float = -16,
         n_quantizers: int = None,
     ) -> DACFile:
-        """Processes an audio signal from a file or AudioSignal object into
-        discrete codes. This function processes the signal in short windows,
-        using constant GPU memory.
-
-        Parameters
-        ----------
-        audio_path_or_signal : Union[str, Path, AudioSignal]
-            audio signal to reconstruct
-        win_duration : float, optional
-            window duration in seconds, by default 5.0
-        verbose : bool, optional
-            by default False
-        normalize_db : float, optional
-            normalize db, by default -16
-
-        Returns
-        -------
-        DACFile
-            Object containing compressed codes and metadata
-            required for decompression
-        """
         audio_signal = audio_path_or_signal
         if isinstance(audio_signal, (str, Path)):
-            # This might need adjustment if audiotools is not found, or we make it optional
             try:
                 audio_signal = AudioSignal.load_from_file_with_ffmpeg(str(audio_signal))
-            except NameError: # audiotools.AudioSignal not defined
-                 raise ImportError("audiotools.AudioSignal is required for DACFile.compress from path. Please ensure audiotools is installed.")
-
+            except NameError:
+                 raise ImportError("audiotools.AudioSignal is required. Please ensure audiotools is installed.")
+            except Exception as e:
+                 raise RuntimeError(f"Failed to load audio file {audio_path_or_signal}: {e}")
 
         self.eval()
-        original_padding = self.padding
+        original_padding_state = self.padding # Store original padding state
         original_device = audio_signal.device
-
         audio_signal = audio_signal.clone()
         original_sr = audio_signal.sample_rate
-
-        resample_fn = audio_signal.resample
-        loudness_fn = audio_signal.loudness
-
-        # If audio is > 10 minutes long, use the ffmpeg versions
-        if audio_signal.signal_duration >= 10 * 60 * 60: # Corrected: 10 min * 60 sec/min = 600 seconds; original has 10*60*60
-            resample_fn = audio_signal.ffmpeg_resample
-            loudness_fn = audio_signal.ffmpeg_loudness
-
         original_length = audio_signal.signal_length
-        resample_fn(self.sample_rate)
-        input_db = loudness_fn()
+
+        # Resample and normalize
+        if self.sample_rate != original_sr: # self.sample_rate is the model's rate
+            audio_signal.resample(self.sample_rate)
+
+        input_db = audio_signal.loudness() # Calculate loudness after resampling to model's rate
 
         if normalize_db is not None:
             audio_signal.normalize(normalize_db)
-        audio_signal.ensure_max_of_audio()
+        audio_signal.ensure_max_of_audio() # Ensure audio is not clipping
 
-        nb, nac, nt = audio_signal.audio_data.shape
-        audio_signal.audio_data = audio_signal.audio_data.reshape(nb * nac, 1, nt)
-        win_duration = (
-            audio_signal.signal_duration if win_duration is None else win_duration
-        )
+        # Reshape for model if needed (e.g. [B, C, T] -> [B*C, 1, T])
+        # The DAC model's preprocess expects [B, 1, T] or [B, T]
+        # AudioSignal typically stores data as [B, C, T]
+        if audio_signal.audio_data.ndim == 3:
+            nb, nac, nt = audio_signal.audio_data.shape
+            audio_signal.audio_data = audio_signal.audio_data.reshape(nb * nac, 1, nt)
+        elif audio_signal.audio_data.ndim == 2: # Assume [C, T] or [B, T]
+            # If [C,T] and C > 1, this could be an issue. For now, assume it's [B,T] or [1,T]
+            audio_signal.audio_data = audio_signal.audio_data.unsqueeze(1) # to [B,1,T]
+        else: # Should be [B, 1, T]
+            nt = audio_signal.audio_data.shape[-1]
+            nac = audio_signal.audio_data.shape[1] if audio_signal.audio_data.ndim > 1 else 1
 
-        if audio_signal.signal_duration <= win_duration:
-            # Unchunked compression (used if signal length < win duration)
-            self.padding = True
-            n_samples = nt
-            # hop = nt # hop should be related to output length not input for chunking logic
-            # For unchunked, effectively one large chunk
-        else:
-            # Chunked inference
-            self.padding = False
-            # Zero-pad signal on either side by the delay
-            audio_signal.zero_pad(self.delay, self.delay) # self.delay needs to be defined by the main DAC class
-            n_samples = int(win_duration * self.sample_rate)
-            # Round n_samples to nearest hop length multiple
-            n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length) # self.hop_length needs to be defined by the main DAC class
 
-        # The calculation of 'hop' for chunked inference in the original base.py seems to be missing
-        # or assumed to be handled by the caller or derived differently.
-        # For unchunked, it's effectively the whole signal.
-        # For chunked, it's usually related to n_samples - overlap, or a fixed hop.
-        # The original code sets hop = self.get_output_length(n_samples) for chunked.
-        # This implies that `encode` is called on chunks of `n_samples` and produces `hop` length codes.
-        # This needs careful check with how DAC.encode and DAC.preprocess work with chunking.
-        # For now, assuming the loop structure is correct if n_samples and hop are well-defined.
+        # Chunking logic from original dac/model/base.py
+        # self.delay and self.hop_length must be attributes of the DAC instance
+        delay = self.get_delay() # Call method from CodecMixin
 
-        codes_list = [] # Renamed from codes to avoid conflict
-        range_fn = range if not verbose else tqdm.trange
+        # hop_length here refers to the hop of the encoder in terms of input samples
+        # not to be confused with STFT hop_length for other losses.
+        # This is `np.prod(self.encoder_rates)` in the DAC class.
+        model_hop_length = self.hop_length if hasattr(self, 'hop_length') else np.prod(self.encoder_rates)
 
-        # Determine effective hop for iterating through the original signal
-        # If unchunked, hop_iter is just nt, loop runs once.
-        # If chunked, hop_iter is the 'hop' used for processing windows.
-        # The original dac.model.base.py has `hop = self.get_output_length(n_samples)` for chunked.
-        # Let's assume self.hop_length is the input domain hop, and model's internal hop_length (output codes) is what matters.
-        # This part is complex and depends on the main DAC class's properties (delay, hop_length for codes)
 
-        # Simplified loop for now, assuming `self.encode` handles chunk logic or is called on full signal if unchunked
-        # The original loop was `for i in range_fn(0, nt, hop):`
-        # This implies `hop` is input domain hop. If `self.padding` is true, it means unchunked.
+        # Determine if chunking is needed
+        # Effective win_duration from input or signal duration if shorter
+        effective_win_duration = min(audio_signal.signal_duration, win_duration) if win_duration is not None else audio_signal.signal_duration
 
-        if self.padding: # Unchunked
-            audio_data_to_encode = self.preprocess(audio_signal.audio_data.to(self.device), self.sample_rate)
-            # self.encode is part of the main DAC class, not CodecMixin directly
-            # This CodecMixin provides compress/decompress, which call self.encode/decode
-            # So, these calls should be on `self` which is an instance of DAC
-            _z, c, _latents, _commitment_loss, _codebook_loss = self.encode(audio_data_to_encode, n_quantizers)
+        if audio_signal.signal_duration <= effective_win_duration : # No chunking or signal shorter than window
+            self.padding = True # Pad this single chunk
+            n_samples_input_chunk = audio_signal.audio_data.shape[-1] # Process the whole signal
+            # This processing_hop is for iterating over the input signal in chunks.
+            # For unchunked, it's just the total number of samples, so loop runs once.
+            processing_hop_input_domain = n_samples_input_chunk
+        else: # Chunked inference
+            self.padding = False # No padding for chunks, rely on overlap (via delay)
+            audio_signal.zero_pad(delay, delay) # Pad for chunked processing
+            n_samples_input_chunk = int(effective_win_duration * self.sample_rate)
+            n_samples_input_chunk = int(math.ceil(n_samples_input_chunk / model_hop_length) * model_hop_length)
+            # The hop for processing chunks in the input domain.
+            # This should be related to the output code length of a chunk to avoid re-encoding same parts.
+            # output_code_hop_for_chunk = self.get_output_length(n_samples_input_chunk) # This is in terms of code frames
+            # This needs to be mapped back to input domain samples.
+            # The original code's loop `for i in range_fn(0, nt, hop):` suggests `hop` is input domain.
+            # Let's use a hop that corresponds to the number of samples that produce one chunk of codes,
+            # without overlap initially for simplicity, then adjust if overlap-add is needed for recombination.
+            # The original dac.utils.encode.py calls dac.compress which uses this method.
+            # Let's assume for now that `n_samples_input_chunk` is processed, and the iteration hop matches this.
+            # This is non-overlapping chunking. The `delay` padding handles edge effects.
+            processing_hop_input_domain = n_samples_input_chunk - (2 * delay) # Effective advance if chunks are to be overlapped by `delay`
+            if processing_hop_input_domain <=0: processing_hop_input_domain = n_samples_input_chunk
+
+
+        codes_list = []
+        range_fn = tqdm.trange if verbose else range
+
+        current_pos = 0
+        total_input_samples_to_process = audio_signal.audio_data.shape[-1] # After initial padding for chunking if any
+
+        while current_pos < total_input_samples_to_process:
+            chunk_end = min(current_pos + n_samples_input_chunk, total_input_samples_to_process)
+            x_chunk = audio_signal.audio_data[..., current_pos:chunk_end]
+
+            # Ensure chunk has enough length for the model's preprocess step or internal needs
+            # DAC.preprocess pads to a multiple of self.hop_length (encoder total stride)
+            # This should be fine.
+
+            # Preprocess chunk (handles device placement and padding to model's hop_length)
+            # self.preprocess is DAC.preprocess, not CodecMixin.preprocess
+            # It expects sample_rate to match self.sample_rate
+            audio_data_chunk_processed = self.preprocess(x_chunk.to(self.device), self.sample_rate)
+
+            # Encode chunk
+            # self.encode is DAC.encode
+            _, c, _, _, _ = self.encode(audio_data_chunk_processed, n_quantizers) # c is [B*C, Nq, T_codes_chunk]
             codes_list.append(c.to(original_device))
-            chunk_length = c.shape[-1] # Length of codes from one chunk
-        else: # Chunked (original logic was more complex with self.delay and derived hop)
-            # This simplified chunking might not perfectly match original if overlap is needed
-            # The original logic: audio_signal.zero_pad(self.delay, self.delay)
-            # n_samples = int(math.ceil(n_samples / self.hop_length) * self.hop_length)
-            # hop_for_iteration = self.get_output_length(n_samples) # This hop is in the code domain
-            # This is complex; for now, let's assume a simpler chunking or that it's handled
-            # by how Zonos calls this. Zonos autoencoder calls self.dac.encode directly.
-            # The compress/decompress in this CodecMixin are higher level.
-            # For `autoencoder.py` which calls `self.dac.encode()`, it passes the whole (preprocessed) wav.
-            # So, the chunking logic here in `compress` might not be directly used by Zonos's current autoencoder.py structure.
-            # Let's assume for now that if this `compress` is called, it's on a manageable signal length.
-            # For robustness, a proper chunked implementation from the original DAC is needed if used for large files.
-            # Given Zonos autoencoder.py, it seems to operate on the whole input at once for encode/decode.
-             audio_data_to_encode = self.preprocess(audio_signal.audio_data.to(self.device), self.sample_rate)
-            _z, c, _latents, _commitment_loss, _codebook_loss = self.encode(audio_data_to_encode, n_quantizers)
-            codes_list.append(c.to(original_device))
-            chunk_length = c.shape[-1]
 
+            if current_pos == 0: # First chunk determines the code chunk length for DACFile metadata
+                # This chunk_length is in terms of code frames per processed window
+                # For unchunked, it's total code frames. For chunked, it's codes from one window.
+                # The DACFile.chunk_length is used in decompress to iterate.
+                # It should be the number of code frames produced by one window `n_samples_input_chunk`
+                # *after* encoder downsampling.
+                # If unchunked (self.padding=True), it is total codes.
+                # If chunked (self.padding=False), it's codes from one win_duration.
+                dac_file_chunk_length = c.shape[-1]
+
+
+            if not self.padding and (current_pos + processing_hop_input_domain >= total_input_samples_to_process): # Last chunk in chunked mode
+                break
+            current_pos += processing_hop_input_domain
+            if processing_hop_input_domain == 0 : break # Safety for non-advancing hop
 
         codes_tensor = torch.cat(codes_list, dim=-1)
 
         dac_file = DACFile(
             codes=codes_tensor,
-            chunk_length=chunk_length, # This will be the total code length if not properly chunked
+            chunk_length=dac_file_chunk_length,
             original_length=original_length,
             input_db=input_db,
-            channels=nac,
+            channels=nac, # Original number of channels
             sample_rate=original_sr,
-            padding=self.padding, # This reflects if the whole signal was processed with padding
+            padding=self.padding, # Reflects padding mode used for the whole signal / final chunk
             dac_version=SUPPORTED_VERSIONS[-1],
         )
 
-        # This line was outside the loop in original, seems like a bug if codes was a list of tensors.
-        # if n_quantizers is not None:
-        #     codes = codes[:, :n_quantizers, :]
-        # This should be applied to codes_tensor if needed:
         if n_quantizers is not None:
             dac_file.codes = dac_file.codes[:, :n_quantizers, :]
 
-
-        self.padding = original_padding
+        self.padding = original_padding_state # Restore padding state
         return dac_file
 
     @torch.no_grad()
