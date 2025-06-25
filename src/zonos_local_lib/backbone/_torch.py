@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.nn import functional as F
 
-from ..config import BackboneConfig, InferenceParams # Adjusted import
+from ..config import BackboneConfig, InferenceParams # Adjusted for relative import
 
 
 def precompute_freqs_cis(seq_len: int, n_elem: int, base: float = 10000) -> torch.Tensor:
@@ -64,18 +64,16 @@ class TorchZonosBackbone(nn.Module):
     def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16):
         head_dim = self.config.d_model // self.config.attn_cfg["num_heads"]
 
-        # Determine the target device from an existing parameter of the module
         module_device = self.norm_f.weight.device
 
         # Compute freqs_cis on CPU then move to target device if not already there or on correct device
-        # Check if it needs recomputation or moving (e.g. if device changed or not initialized)
-        if not hasattr(self, 'freqs_cis') or self.freqs_cis.device != module_device or self.freqs_cis.shape[0] < 16384 : # check size too
-            # Max sequence length for RoPE is often fixed (e.g., 16384 or a large value from config)
-            cpu_freqs_cis = precompute_freqs_cis(16384, head_dim) # This is on CPU
+        if not hasattr(self, 'freqs_cis') or self.freqs_cis.device != module_device or self.freqs_cis.shape[0] < 16384:
+            cpu_freqs_cis = precompute_freqs_cis(16384, head_dim)
             self.freqs_cis = cpu_freqs_cis.to(module_device)
 
         return {
-            i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, device=module_device) # Pass device
+            # Pass module_device to sub-layer cache allocation
+            i: layer.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype, device=module_device)
             for i, layer in enumerate(self.layers)
         }
 
@@ -84,22 +82,20 @@ class TorchZonosBackbone(nn.Module):
         current_seq_len = hidden_states.shape[1]
         start_pos = inference_params.seqlen_offset
 
-        # Create positions for the current sequence segment for RoPE
-        # Ensure positions are created on the same device as self.freqs_cis for indexing
-        # self.freqs_cis is expected to be on module_device (e.g., cuda if model is on cuda)
         if not hasattr(self, 'freqs_cis'):
-            # This should not happen if allocate_inference_cache was called, which is a prerequisite
-            # for forward with inference_params.
+            # This should not happen if allocate_inference_cache was called
             raise RuntimeError("freqs_cis not initialized. Call allocate_inference_cache first.")
 
+        # RoPE positions are relative to the start of the sequence segment
+        # Ensure positions are created on the same device as self.freqs_cis for indexing
         positions = torch.arange(start_pos, start_pos + current_seq_len, device=self.freqs_cis.device)
 
         # Slice self.freqs_cis to get frequencies for the current range of positions
         # freqs_cis_for_layer will have shape [current_seq_len, num_rope_features, 2]
         freqs_cis_for_layer = self.freqs_cis[positions]
 
-        # Ensure freqs_cis_for_layer is on the same device as hidden_states if different
-        # (though self.freqs_cis should already be on current_device via allocate_inference_cache logic)
+        # Ensure freqs_cis_for_layer is on the same device as hidden_states
+        # (self.freqs_cis should already be on current_device via allocate_inference_cache logic)
         freqs_cis_for_layer = freqs_cis_for_layer.to(current_device)
 
         for i, layer in enumerate(self.layers):
@@ -120,8 +116,8 @@ class TransformerBlock(nn.Module):
         self.num_heads_kv = config.attn_cfg["num_heads_kv"]
         self.head_dim = config.d_model // config.attn_cfg["num_heads"]
 
-    def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16, device: torch.device = None):
-        return torch.empty(batch_size, max_seqlen, 2, self.num_heads_kv, self.head_dim, dtype=dtype, device=device), None
+    def allocate_inference_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = torch.bfloat16, device: torch.device = None): # Add device param
+        return torch.empty(batch_size, max_seqlen, 2, self.num_heads_kv, self.head_dim, dtype=dtype, device=device), None # Use device
 
     def forward(self, x: torch.Tensor, inference_params: InferenceParams, freqs_cis: torch.Tensor) -> torch.Tensor:
         x = x + self.mixer(self.norm(x), inference_params, freqs_cis)
@@ -156,36 +152,31 @@ class Attention(nn.Module):
         k = apply_rotary_emb(k, freqs_cis)
 
         kv = _update_kv_cache(k, v, inference_params, self.layer_idx)
-        k_retrieved, v_retrieved = kv.unbind(dim=-3) # k_retrieved, v_retrieved are from cache, likely bfloat16
+        k_retrieved, v_retrieved = kv.unbind(dim=-3)
 
-        # Handle GQA: repeat K and V heads if num_heads_kv < num_heads
-        # k_retrieved shape: [batch_size, current_kv_cache_len, self.num_heads_kv, self.head_dim]
-        # v_retrieved shape: [batch_size, current_kv_cache_len, self.num_heads_kv, self.head_dim]
+        # GQA: Repeat K and V heads if num_heads_kv < num_heads
         if self.num_heads_kv < self.num_heads:
             if self.num_heads % self.num_heads_kv != 0:
                 raise ValueError(f"num_heads ({self.num_heads}) must be divisible by num_heads_kv ({self.num_heads_kv}) for GQA.")
             repeats = self.num_heads // self.num_heads_kv
-            k_retrieved = torch.repeat_interleave(k_retrieved, repeats, dim=2) # dim 2 is the head dimension
+            k_retrieved = torch.repeat_interleave(k_retrieved, repeats, dim=2) # dim 2 is head dim before transpose
             v_retrieved = torch.repeat_interleave(v_retrieved, repeats, dim=2)
-        # Now k_retrieved/v_retrieved have shape [batch_size, current_kv_cache_len, self.num_heads, self.head_dim] (effectively)
 
-        # Ensure q, k, v have the same dtype before attention
-        # q is currently float32 (or original dtype of x), k_retrieved and v_retrieved are from KV cache (e.g. bfloat16)
+        # Ensure q matches k/v dtype.
+        # If model is bfloat16, q, k_retrieved are already bfloat16. If model is float32, they are float32.
+        # This cast handles potential inconsistencies or if q was float() from RoPE.
         q = q.to(k_retrieved.dtype)
 
         q_final, k_final, v_final = map(lambda x: x.transpose(1, 2), (q, k_retrieved, v_retrieved))
-        # After transpose:
-        # q_final: [batch_size, self.num_heads, seqlen, self.head_dim]
-        # k_final: [batch_size, self.num_heads (after repeat), current_kv_cache_len, self.head_dim]
-        # v_final: [batch_size, self.num_heads (after repeat), current_kv_cache_len, self.head_dim]
 
-        # For PyTorch versions like 2.7.1, enable_gqa is not a valid argument.
-        # GQA is handled by broadcasting if num_heads_kv < num_heads.
+        # Remove enable_gqa=True as it's not supported / needed in PyTorch 2.7.1
         y = F.scaled_dot_product_attention(q_final, k_final, v_final, is_causal=seqlen > 1)
 
         y = y.transpose(1, 2).contiguous().view(batch_size, seqlen, q_size)
 
-        # Ensure y (bfloat16 from SDPA) matches out_proj's weight dtype (likely float32)
+        # Cast y to out_proj.weight.dtype before projection.
+        # If model is .to(bfloat16), out_proj.weight is bfloat16. SDPA output y (from bfloat16 inputs) is bfloat16.
+        # This ensures consistency if dtypes somehow diverge or if model is float32.
         y = self.out_proj(y.to(self.out_proj.weight.dtype))
         return y
 
@@ -199,3 +190,4 @@ class FeedForward(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, gate = self.fc1(x).chunk(2, dim=-1)
         return self.fc2(y * F.silu(gate))
+```
