@@ -158,11 +158,26 @@ class Attention(nn.Module):
         kv = _update_kv_cache(k, v, inference_params, self.layer_idx)
         k_retrieved, v_retrieved = kv.unbind(dim=-3) # k_retrieved, v_retrieved are from cache, likely bfloat16
 
+        # Handle GQA: repeat K and V heads if num_heads_kv < num_heads
+        # k_retrieved shape: [batch_size, current_kv_cache_len, self.num_heads_kv, self.head_dim]
+        # v_retrieved shape: [batch_size, current_kv_cache_len, self.num_heads_kv, self.head_dim]
+        if self.num_heads_kv < self.num_heads:
+            if self.num_heads % self.num_heads_kv != 0:
+                raise ValueError(f"num_heads ({self.num_heads}) must be divisible by num_heads_kv ({self.num_heads_kv}) for GQA.")
+            repeats = self.num_heads // self.num_heads_kv
+            k_retrieved = torch.repeat_interleave(k_retrieved, repeats, dim=2) # dim 2 is the head dimension
+            v_retrieved = torch.repeat_interleave(v_retrieved, repeats, dim=2)
+        # Now k_retrieved/v_retrieved have shape [batch_size, current_kv_cache_len, self.num_heads, self.head_dim] (effectively)
+
         # Ensure q, k, v have the same dtype before attention
-        # q is currently float32, k_retrieved and v_retrieved are bfloat16 from KV cache
+        # q is currently float32 (or original dtype of x), k_retrieved and v_retrieved are from KV cache (e.g. bfloat16)
         q = q.to(k_retrieved.dtype)
 
         q_final, k_final, v_final = map(lambda x: x.transpose(1, 2), (q, k_retrieved, v_retrieved))
+        # After transpose:
+        # q_final: [batch_size, self.num_heads, seqlen, self.head_dim]
+        # k_final: [batch_size, self.num_heads (after repeat), current_kv_cache_len, self.head_dim]
+        # v_final: [batch_size, self.num_heads (after repeat), current_kv_cache_len, self.head_dim]
 
         # For PyTorch versions like 2.7.1, enable_gqa is not a valid argument.
         # GQA is handled by broadcasting if num_heads_kv < num_heads.
