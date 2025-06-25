@@ -81,17 +81,20 @@ class ZonosLocalVoice(BaseTTSEngine):
         return LANGUAGE_MAP_ZONOS.get(lang_code.lower(), LANGUAGE_MAP_ZONOS.get(main_code, "en-us"))
 
     def _map_speed_to_zonos_rate(self, speed: TTSPlaybackSpeed) -> float:
-        """Maps TTSPlaybackSpeed to a rate multiplier for Zonos."""
-        # Zonos's make_cond_dict has a `speaking_rate` parameter which seems to be a multiplier.
-        # Default in make_cond_dict is 1.0.
+        """
+        Maps TTSPlaybackSpeed to a speaking rate value.
+        The make_cond_dict function (aligned with reference zonos/conditioning.py)
+        has a comment: "Speaking rate in phonemes per minute (0 to 40). 30 is very fast, 10 is slow."
+        And a default of 15.0. This function will map to that scale.
+        """
         speed_map = {
-            TTSPlaybackSpeed.VERY_SLOW: 0.7,
-            TTSPlaybackSpeed.SLOW: 0.85,
-            TTSPlaybackSpeed.NORMAL: 1.0,
-            TTSPlaybackSpeed.FAST: 1.15,
-            TTSPlaybackSpeed.VERY_FAST: 1.3,
+            TTSPlaybackSpeed.VERY_SLOW: 8.0,    # Slower than 'slow'
+            TTSPlaybackSpeed.SLOW: 10.0,         # 'slow' as per comment
+            TTSPlaybackSpeed.NORMAL: 15.0,       # Default in make_cond_dict
+            TTSPlaybackSpeed.FAST: 22.0,         # Faster
+            TTSPlaybackSpeed.VERY_FAST: 30.0,    # 'very fast' as per comment
         }
-        return speed_map.get(speed, 1.0)
+        return speed_map.get(speed, 15.0) # Default to normal (15.0)
 
     def _get_embedding_cache_dir(self) -> str:
         app_data_dir = None
@@ -137,6 +140,7 @@ class ZonosLocalVoice(BaseTTSEngine):
         try:
             print(f"ZonosLocalVoice: Generating new speaker embedding for: {reference_audio_path}")
             wav, sr = torchaudio.load(reference_audio_path)
+            print(f"ZonosLocalVoice: Loaded reference audio '{reference_audio_path}'. Shape: {wav.shape}, Sample Rate: {sr}") # DEBUG PRINT
             # make_speaker_embedding expects wav on its internal device, returns on model's device
             embedding = self.zonos_model.make_speaker_embedding(wav, sr) # Returns on self.target_device
 
