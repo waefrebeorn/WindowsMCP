@@ -156,13 +156,17 @@ class Attention(nn.Module):
         k = apply_rotary_emb(k, freqs_cis)
 
         kv = _update_kv_cache(k, v, inference_params, self.layer_idx)
-        k, v = kv.unbind(dim=-3)
+        k_retrieved, v_retrieved = kv.unbind(dim=-3) # k_retrieved, v_retrieved are from cache, likely bfloat16
 
-        q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
+        # Ensure q, k, v have the same dtype before attention
+        # q is currently float32, k_retrieved and v_retrieved are bfloat16 from KV cache
+        q = q.to(k_retrieved.dtype)
+
+        q_final, k_final, v_final = map(lambda x: x.transpose(1, 2), (q, k_retrieved, v_retrieved))
 
         # For PyTorch versions like 2.7.1, enable_gqa is not a valid argument.
         # GQA is handled by broadcasting if num_heads_kv < num_heads.
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=seqlen > 1)
+        y = F.scaled_dot_product_attention(q_final, k_final, v_final, is_causal=seqlen > 1)
 
         y = y.transpose(1, 2).contiguous().view(batch_size, seqlen, q_size)
 
