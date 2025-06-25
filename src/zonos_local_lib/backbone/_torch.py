@@ -189,4 +189,4 @@ class FeedForward(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         y, gate = self.fc1(x).chunk(2, dim=-1)
         return self.fc2(y * F.silu(gate))
-```
+
