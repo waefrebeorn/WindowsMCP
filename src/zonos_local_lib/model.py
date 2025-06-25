@@ -18,50 +18,25 @@ from .sampling import sample_from_logits
 from .speaker_cloning import SpeakerEmbeddingLDA
 from .utils import DEFAULT_DEVICE, find_multiple, pad_weight_
 
-# Determine DEFAULT_BACKBONE_CLS safely
-if BACKBONES:
-    DEFAULT_BACKBONE_CLS = next(iter(BACKBONES.values()))
-else:
-    DEFAULT_BACKBONE_CLS = None
+DEFAULT_BACKBONE_CLS = next(iter(BACKBONES.values()))
 
 
 class Zonos(nn.Module):
-    def __init__(self, config: ZonosConfig, backbone_cls=None): # Allow backbone_cls to be None initially
+    def __init__(self, config: ZonosConfig, backbone_cls=DEFAULT_BACKBONE_CLS):
         super().__init__()
         self.config = config
         dim = config.backbone.d_model
         self.eos_token_id = config.eos_token_id
         self.masked_token_id = config.masked_token_id
 
-        if backbone_cls is None:
-            if not BACKBONES:
-                raise RuntimeError("No backbones available in BACKBONES dictionary. Check zonos_local_lib.backbone setup.")
-
-            # Fallback logic to select a backbone if not provided
-            is_transformer = not bool(config.backbone.ssm_cfg)
-            if is_transformer and "torch" in BACKBONES:
-                backbone_cls = BACKBONES["torch"]
-            elif not is_transformer and "mamba_ssm" in BACKBONES: # Prefer Mamba if SSM config and Mamba available
-                backbone_cls = BACKBONES["mamba_ssm"]
-            elif "torch" in BACKBONES: # Fallback to torch if primary choice not met
-                backbone_cls = BACKBONES["torch"]
-            elif BACKBONES: # Fallback to the first available one if others not suitable/available
-                 backbone_cls = next(iter(BACKBONES.values()))
-            else: # Should be caught by the earlier "No backbones available"
-                 raise RuntimeError("Could not determine a backbone class for Zonos __init__.")
-
         self.autoencoder = DACAutoencoder()
         self.backbone = backbone_cls(config.backbone)
         self.prefix_conditioner = PrefixConditioner(config.prefix_conditioner, dim)
         self.spk_clone_model = None
 
-        # Using hardcoded vocab sizes from the provided "original" file for now
-        # These might need to be made configurable based on self.config for robustness
-        _embedding_vocab_size = 1026
-        _head_output_vocab_size = 1025
-
-        self.embeddings = nn.ModuleList([nn.Embedding(_embedding_vocab_size, dim) for _ in range(self.autoencoder.num_codebooks)])
-        self.heads = nn.ModuleList([nn.Linear(dim, _head_output_vocab_size, bias=False) for _ in range(self.autoencoder.num_codebooks)])
+        # TODO: pad to multiple of at least 8
+        self.embeddings = nn.ModuleList([nn.Embedding(1026, dim) for _ in range(self.autoencoder.num_codebooks)])
+        self.heads = nn.ModuleList([nn.Linear(dim, 1025, bias=False) for _ in range(self.autoencoder.num_codebooks)])
 
         self._cg_graph = None
         self._cg_batch_size = None
@@ -74,13 +49,8 @@ class Zonos(nn.Module):
             self.register_load_state_dict_post_hook(self._pad_embeddings_and_heads)
 
     def _pad_embeddings_and_heads(self, *args, **kwargs):
-        # The original used *self.embeddings, *self.heads
-        # Ensuring this works with ModuleList:
-        for w_emb in self.embeddings:
-            pad_weight_(w_emb, self.config.pad_vocab_to_multiple_of)
-        for w_head in self.heads: # Assuming pad_weight_ works for Linear layers output features
-            pad_weight_(w_head, self.config.pad_vocab_to_multiple_of)
-
+        for w in [*self.embeddings, *self.heads]: # Iterate directly over combined list
+            pad_weight_(w, self.config.pad_vocab_to_multiple_of)
 
     @property
     def device(self) -> torch.device:
@@ -99,256 +69,318 @@ class Zonos(nn.Module):
         cls, config_path: str, model_path: str, device: str = DEFAULT_DEVICE, backbone: str | None = None
     ) -> "Zonos":
         config = ZonosConfig.from_dict(json.load(open(config_path)))
-
-        backbone_cls_resolved = None
         if backbone:
-            backbone_cls_resolved = BACKBONES.get(backbone)
-            if backbone_cls_resolved is None:
-                raise ValueError(f"Specified backbone '{backbone}' not found or failed to import. Available: {list(BACKBONES.keys())}")
+            backbone_cls = BACKBONES[backbone]
         else:
             is_transformer = not bool(config.backbone.ssm_cfg)
-            if not BACKBONES: # Should ideally not be empty if TorchZonosBackbone is always there
-                raise RuntimeError("No backbones available in BACKBONES dictionary.")
-
-            # Defaulting logic
+            backbone_cls = DEFAULT_BACKBONE_CLS
+            # Preferentially route to pure torch backbone for increased performance and lower latency.
             if is_transformer and "torch" in BACKBONES:
-                backbone_cls_resolved = BACKBONES["torch"]
-            elif not is_transformer and "mamba_ssm" in BACKBONES: # Mamba preferred for SSM
-                backbone_cls_resolved = BACKBONES["mamba_ssm"]
-            elif "torch" in BACKBONES: # Fallback to torch if mamba not available/suitable
-                backbone_cls_resolved = BACKBONES["torch"]
-            elif BACKBONES: # Absolute fallback to first available
-                 backbone_cls_resolved = next(iter(BACKBONES.values()))
-            else:
-                 raise RuntimeError("Could not determine a backbone class for Zonos.from_local.")
+                backbone_cls = BACKBONES["torch"]
 
+        # Determine target_dtype based on device and CUDA capabilities (as in previous version)
         target_dtype = torch.bfloat16 if str(device) != "cpu" and torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
-        model = cls(config, backbone_cls_resolved).to(device) # Move to device first
-        if target_dtype != torch.float32 : # Then cast dtype if not float32
-             model = model.to(dtype=target_dtype)
 
+        model = cls(config, backbone_cls).to(device) # Create model and move to device
+        if target_dtype == torch.bfloat16: # Cast to bfloat16 if applicable
+            model = model.to(torch.bfloat16)
+
+        # Ensure autoencoder's DAC model is on the correct device and dtype
         if hasattr(model.autoencoder, 'dac') and model.autoencoder.dac is not None:
-            model.autoencoder.dac.to(device)
-            if target_dtype != torch.float32 and hasattr(model.autoencoder.dac, 'to'):
-                 try: # Autoencoder might not support all dtypes
+            model.autoencoder.dac.to(device) # Move DAC to device
+            if target_dtype == torch.bfloat16 and hasattr(model.autoencoder.dac, 'to'):
+                 try:
                       model.autoencoder.dac = model.autoencoder.dac.to(dtype=target_dtype)
                  except RuntimeError:
                       print(f"Warning: Could not cast DAC autoencoder to {target_dtype}, keeping its original dtype.")
 
 
+        # Load state dictionary, ensuring tensors are on CPU first then cast to target_dtype if needed
         loaded_tensors = {}
-        # Load tensors to CPU first, then move to target device & dtype via model.load_state_dict
-        # This avoids issues if safetensors device mapping isn't perfect or if model is already on device.
         with safetensors.safe_open(model_path, framework="pt", device="cpu") as f:
             for k in f.keys():
                 loaded_tensors[k] = f.get_tensor(k)
 
-        # Align dtypes of loaded tensors to model's target_dtype before loading, if they are float
-        # This is important because load_state_dict can be strict about dtypes.
-        # model.to(dtype=target_dtype) should have already set parameter dtypes.
-        # We are ensuring the loaded state_dict tensors match this.
+        # Align dtypes of loaded tensors to model's target_dtype before loading state_dict
         for k_loaded, t_loaded in loaded_tensors.items():
             if t_loaded.is_floating_point() and t_loaded.dtype != target_dtype:
                 loaded_tensors[k_loaded] = t_loaded.to(dtype=target_dtype)
-            elif not t_loaded.is_floating_point() and hasattr(model.state_dict().get(k_loaded, None),'dtype') and \
-                 t_loaded.dtype != model.state_dict()[k_loaded].dtype :
-                 # For non-float, e.g. int/bool, ensure they match if model has specific non-float dtypes (rare for params)
-                 # This part is less common, usually float parameters are the main concern.
-                 pass # Or cast if necessary: loaded_tensors[k_loaded] = t_loaded.to(dtype=model.state_dict()[k_loaded].dtype)
+            # Non-float parameters are less common to have dtype issues, but could be handled here if necessary
 
-
-        model.load_state_dict(loaded_tensors, strict=True) # strict=True is good for aligned structures
-
+        model.load_state_dict(loaded_tensors, strict=True)
         return model.eval()
 
+
     def make_speaker_embedding(self, wav: torch.Tensor, sr: int) -> torch.Tensor:
+        """Generate a speaker embedding from an audio clip."""
         if self.spk_clone_model is None:
+            # Ensure device is correctly passed as a string if SpeakerEmbeddingLDA expects it
             self.spk_clone_model = SpeakerEmbeddingLDA(device=str(self.device))
 
-        # SpeakerEmbeddingLDA handles input wav device internally.
-        # It returns embedding on its own target_device.
-        _, spk_embedding = self.spk_clone_model(wav, sr)
+        # spk_clone_model handles internal device placement of wav
+        _, spk_embedding = self.spk_clone_model(wav, sr) # wav is on host, spk_clone_model moves it
 
-        # Ensure final embedding is on main model's device and matches model's primary float dtype
+        # Determine the model's primary floating-point dtype
         model_float_dtype = next(p.dtype for p in self.parameters() if p.is_floating_point())
+
+        # Ensure the final embedding is on the model's main device and matches its primary float dtype
         return spk_embedding.unsqueeze(0).to(device=self.device, dtype=model_float_dtype)
 
     def embed_codes(self, codes: torch.Tensor) -> torch.Tensor:
-        # codes: [batch_size, num_codebooks, seq_len], type torch.long
-        # self.embeddings are ModuleList of nn.Embedding, already on self.device and self.dtype
-        # codes need to be on self.device.
-        codes_on_device = codes.to(self.device)
-        return sum(emb(codes_on_device[:, i]) for i, emb in enumerate(self.embeddings))
+        # codes are expected to be on self.device by the nn.Embedding layers
+        return sum(emb(codes[:, i].to(self.device)) for i, emb in enumerate(self.embeddings))
 
     def apply_heads(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        # hidden_states: [batch_size, seq_len, d_model], on self.device, self.dtype
-        # self.heads are ModuleList of nn.Linear, already on self.device, self.dtype
-        return torch.stack([head(hidden_states) for head in self.heads], dim=1)
+        # hidden_states are expected to be on self.device by the nn.Linear layers
+        return torch.stack([head(hidden_states.to(self.device)) for head in self.heads], dim=1)
 
     def _compute_logits(
         self, hidden_states: torch.Tensor, inference_params: InferenceParams, cfg_scale: float
     ) -> torch.Tensor:
-        # hidden_states: [B_eff, S, D], dtype e.g. bfloat16
+        """
+        Pass `hidden_states` into `backbone` and `multi_head`, applying
+        classifier-free guidance if `cfg_scale != 1.0`.
+        """
         last_hidden_states = self.backbone(hidden_states, inference_params)[:, -1, :].unsqueeze(1)
-        # last_hidden_states: [B_eff, 1, D], dtype e.g. bfloat16
+        logits = self.apply_heads(last_hidden_states).squeeze(2) # Output from heads should match model's primary float type
 
-        logits = self.apply_heads(last_hidden_states).squeeze(2) # [B_eff, N_q, Vocab], dtype e.g. bfloat16
-        logits = logits.float() # Cast to float32 for CFG math and sampling (as per original Zonos)
+        # Cast to float32 for CFG math and sampling, as per reference
+        logits = logits.float()
 
-        if cfg_scale != 1.0: # Original Zonos didn't check != 0 here
+        if cfg_scale != 1.0: # Reference code doesn't check != 0
             cond_logits, uncond_logits = logits.chunk(2)
             logits = uncond_logits + (cond_logits - uncond_logits) * cfg_scale
 
         # Masking based on actual head output dim vs intended prediction vocab size (1025 for tokens 0-1024)
-        _intended_prediction_vocab_size = 1025
+        _intended_prediction_vocab_size = 1025 # Vocab size for tokens 0-1024
         actual_head_output_dim = self.heads[0].out_features
         if actual_head_output_dim > _intended_prediction_vocab_size:
             logits[..., _intended_prediction_vocab_size:actual_head_output_dim].fill_(-torch.inf)
-        # The original `logits[..., 1025:].fill_(-torch.inf)` is equivalent if head output is exactly 1025.
+        elif actual_head_output_dim < _intended_prediction_vocab_size:
+            # This case should not happen if models are consistent but good to be aware of.
+            # It would mean the head cannot predict all necessary tokens.
+            pass
+
 
         return logits # float32
 
     def _decode_one_token(
         self,
-        input_ids: torch.Tensor, # [B_orig, N_q, 1]
+        input_ids: torch.Tensor,
         inference_params: InferenceParams,
         cfg_scale: float,
-        allow_cudagraphs: bool = True, # From original
+        allow_cudagraphs: bool = True,
     ) -> torch.Tensor:
-        # Original Zonos had: assert cfg_scale != 1, "TODO: add support for cfg_scale=1"
-        # And directly used CFG path if cfg_scale != 1.0.
-        # If cfg_scale == 1.0, it implies no CFG, so hidden_states should not be repeated.
-        # The `generate` method has an assert for cfg_scale != 1.
-        # For now, assuming cfg_scale implies CFG if not 1.0 based on original `generate`'s assert.
+        """
+        Single-step decode. Prepares the hidden states, possibly replicates them
+        for CFG, and then delegates to `_compute_logits`.
 
-        # Simplified logic from original, bypassing CUDA graph for now
-        hidden_states_local = self.embed_codes(input_ids) # input_ids is [B_orig, N_q, 1] -> HL is [B_orig, 1, D]
+        Below we wrap this function with a simple CUDA Graph capturing mechanism,
+        doing 3 warmup steps if needed and then capturing or replaying the graph.
+        We only recapture if the batch size changes.
+        """
+        # TODO: support cfg_scale==1 (reference code has this TODO)
+        # The reference code asserts cfg_scale != 1 in generate, so this path might not be fully tested for cfg_scale=1
+        if cfg_scale == 1.0: # Path for no CFG or if CFG scale is 1 (effectively no CFG effect)
+            hidden_states = self.embed_codes(input_ids) # B_orig, 1, D
+            # InferenceParams should be set for B_orig for this path
+            return self._compute_logits(hidden_states, inference_params, cfg_scale)
 
-        if cfg_scale != 1.0: # If CFG is active (as per original's direct path for cfg_scale != 1)
-            hidden_states_local = hidden_states_local.repeat(2, 1, 1)  # Repeat for CFG -> [2*B_orig, 1, D]
-        # If cfg_scale == 1.0, hidden_states_local remains [B_orig, 1, D]
-        # This means inference_params must be set up for B_orig if cfg_scale == 1.0
-        # And for 2*B_orig if cfg_scale != 1.0. This is handled by effective_cache_batch_size in generate.
+        bsz = input_ids.size(0) # This is B_orig
 
-        return self._compute_logits(hidden_states_local, inference_params, cfg_scale)
+        if not allow_cudagraphs or input_ids.device.type != "cuda":
+            hidden_states_local = self.embed_codes(input_ids) # B_orig, 1, D
+            hidden_states_local = hidden_states_local.repeat(2, 1, 1) # 2*B_orig, 1, D for CFG
+            # InferenceParams should be set for 2*B_orig for this path
+            return self._compute_logits(hidden_states_local, inference_params, cfg_scale)
+
+        need_capture = (self._cg_graph is None) or (self._cg_batch_size != bsz)
+
+        if need_capture:
+            self._cg_graph = None # Reset graph
+
+            self._cg_batch_size = bsz
+            # These inference_params are for 2*bsz (effective batch size with CFG)
+            # This needs to be carefully managed if cfg_scale can be 1.0 here.
+            # Assuming cfg_scale != 1.0 if CUDA graphs are used, as per generate's assert.
+            self._cg_inference_params = inference_params
+            self._cg_scale = cfg_scale
+
+            # Warmup
+            for _ in range(3):
+                hidden_states = self.embed_codes(input_ids) # B_orig, 1, D
+                hidden_states = hidden_states.repeat(2, 1, 1)  # 2*B_orig, 1, D
+                _ = self._compute_logits(hidden_states, self._cg_inference_params, self._cg_scale)
+
+            self._cg_input_ids = input_ids.clone() # B_orig, N_q, 1
+
+            # Determine shape for _cg_logits based on output of _compute_logits
+            # It's [B_orig, N_q, Vocab_pred] because CFG happens inside _compute_logits
+            # and it returns the final CFG'd logits for B_orig.
+            # Let's get a sample output to define shape for _cg_logits:
+            with torch.no_grad(): # Ensure no side effects during this shape check
+                sample_logits_shape = self._compute_logits(hidden_states.detach().clone(), self._cg_inference_params, self._cg_scale).shape
+            self._cg_logits = torch.empty(sample_logits_shape, device=input_ids.device, dtype=torch.float32) # Logits are float32
+
+            g = torch.cuda.CUDAGraph()
+
+            def capture_region():
+                # Operations inside graph capture must use graph's static tensors
+                hidden_states_local_cg = self.embed_codes(self._cg_input_ids) # B_orig, 1, D
+                hidden_states_local_cg = hidden_states_local_cg.repeat(2, 1, 1) # 2*B_orig, 1, D
+                # Assign to the pre-allocated tensor
+                self._cg_logits.copy_(self._compute_logits(hidden_states_local_cg, self._cg_inference_params, self._cg_scale))
+
+
+            with torch.cuda.graph(g):
+                capture_region()
+
+            self._cg_graph = g
+
+        else: # Graph exists and batch size matches
+            self._cg_input_ids.copy_(input_ids)
+
+        self._cg_graph.replay()
+        return self._cg_logits.clone() # Return a clone to avoid modification issues if caller changes it
 
 
     def _prefill(
         self,
-        prefix_conditioning: torch.Tensor, # [B_eff, Cond_S, D]
+        prefix_hidden_states: torch.Tensor, # [B_eff, Cond_S, D] (B_eff = 2*B_orig if CFG)
         input_ids: torch.Tensor, # Audio prompt codes: [B_orig, N_q, Prefix_Audio_S]
-        inference_params: InferenceParams,
+        inference_params: InferenceParams, # For B_eff
         cfg_scale: float,
     ) -> torch.Tensor:
-
+        """
+        "Prefill" mode: we already have `prefix_hidden_states`, and we want
+        to append new embeddings, then compute the logits.
+        """
         embedded_audio_prompt = self.embed_codes(input_ids) # [B_orig, Prefix_Audio_S, D]
 
-        if cfg_scale != 1.0: # CFG is active
-            # prefix_conditioning is already [2*B_orig, Cond_S, D]
-            # embedded_audio_prompt needs to be expanded/repeated to match this for cat
-            # Original used: input_ids.expand(prefix_conditioning.shape[0], -1, -1) then embed.
-            # Here, we embed first, then repeat.
-            if embedded_audio_prompt.shape[0] * 2 == prefix_conditioning.shape[0]: # B_orig * 2 == 2 * B_orig
+        # Replicate embedded_audio_prompt if CFG is enabled
+        if cfg_scale != 1.0:
+            # prefix_hidden_states is already B_eff (e.g., 2*B_orig)
+            # embedded_audio_prompt needs to match this B_eff for concatenation.
+            if embedded_audio_prompt.shape[0] * 2 == prefix_hidden_states.shape[0]: # B_orig * 2 == 2*B_orig
                  embedded_audio_prompt_for_cat = embedded_audio_prompt.repeat(2, 1, 1) # [2*B_orig, Prefix_Audio_S, D]
-            elif embedded_audio_prompt.shape[0] == prefix_conditioning.shape[0]: # Should not happen if CFG active
+            elif embedded_audio_prompt.shape[0] == prefix_hidden_states.shape[0]:
+                 # This case implies B_orig == 2*B_orig (if B_orig=0) or CFG was already applied to audio_prompt.
+                 # Or, it means no CFG for prefix_hidden_states, which contradicts B_eff.
+                 # Assuming if cfg_scale != 1.0, prefix_hidden_states is 2*B_orig.
+                 # This path should generally not be hit if inputs are consistent.
                  embedded_audio_prompt_for_cat = embedded_audio_prompt
             else:
-                 raise ValueError("Batch size mismatch for CFG in _prefill between prefix_conditioning and embedded_audio_prompt.")
-        else: # No CFG
+                 raise ValueError(f"Batch size mismatch for CFG in _prefill. PrefixHS: {prefix_hidden_states.shape[0]}, AudioPrompt: {embedded_audio_prompt.shape[0]}")
+        else: # No CFG (cfg_scale == 1.0)
+            # prefix_hidden_states should be B_orig
+            if embedded_audio_prompt.shape[0] != prefix_hidden_states.shape[0]:
+                raise ValueError(f"Batch size mismatch (no CFG) in _prefill. PrefixHS: {prefix_hidden_states.shape[0]}, AudioPrompt: {embedded_audio_prompt.shape[0]}")
             embedded_audio_prompt_for_cat = embedded_audio_prompt # [B_orig, Prefix_Audio_S, D]
 
-        hidden_states = torch.cat([prefix_conditioning, embedded_audio_prompt_for_cat], dim=1)
+        hidden_states = torch.cat([prefix_hidden_states, embedded_audio_prompt_for_cat], dim=1)
         return self._compute_logits(hidden_states, inference_params, cfg_scale)
 
+
     def setup_cache(self, batch_size: int, max_seqlen: int, dtype: torch.dtype = None) -> InferenceParams:
-        # batch_size is effective_cache_batch_size (e.g. 2*B_orig or B_orig)
-        if dtype is None: # Use model's actual float dtype
-            dtype = next(p.dtype for p in self.parameters() if p.is_floating_point())
+        # batch_size here is the effective batch size for the cache (e.g. 2*B_orig or B_orig)
+        if dtype is None:
+            dtype = next(p.dtype for p in self.parameters() if p.is_floating_point()) # Use model's primary float dtype
 
         max_seqlen = find_multiple(max_seqlen, 8)
+        # Pass model's device to allocate_inference_cache
         key_value_memory_dict = self.backbone.allocate_inference_cache(batch_size, max_seqlen, dtype=dtype)
 
         lengths_per_sample = torch.full((batch_size,), 0, dtype=torch.int32, device=self.device)
         return InferenceParams(max_seqlen, batch_size, 0, 0, key_value_memory_dict, lengths_per_sample)
 
     def prepare_conditioning(self, cond_dict: dict, uncond_dict: dict | None = None) -> torch.Tensor:
-        # This version is from the provided "original" zonos/model.py
+        # This aligns with the reference zonos/model.py
         if uncond_dict is None:
-            # Create uncond_dict by taking required keys from cond_dict.
-            # This means unconditional pass uses conditional values for these keys.
-            # True unconditional might need specific null values (e.g. speaker=None).
-            # ZonosLocalVoice now prepares a more "true" uncond_dict with nullified speaker/emotion.
-            # This method will just use what's passed. If ZonosLocalVoice passes a well-formed
-            # uncond_dict (with None for speaker etc.), prefix_conditioner should handle it.
-            # If ZonosLocalVoice passes uncond_dict=None, this original Zonos logic takes over.
-            # My ZonosLocalVoice fix *does* pass a potentially modified uncond_dict.
-             uncond_dict = {k: cond_dict.get(k) for k in self.prefix_conditioner.required_keys}
-             # Ensure all required keys are at least present as None if not in cond_dict
-             for req_key in self.prefix_conditioner.required_keys:
+            # If uncond_dict is not provided, create one using required keys from cond_dict.
+            # This means the unconditional pass uses the same values as the conditional pass for these keys.
+            # For a "true" unconditional pass, one might want to provide specific null values (e.g. speaker=None).
+            # The calling code (e.g. ZonosLocalVoice) is responsible for preparing an appropriate uncond_dict
+            # if specific unconditional values are needed (like nullifying speaker or emotion).
+            uncond_dict = {k: cond_dict.get(k) for k in self.prefix_conditioner.required_keys}
+            # Ensure all required keys are present, even if None (handled by PrefixConditioner if a sub-conditioner is optional)
+            for req_key in self.prefix_conditioner.required_keys:
                  uncond_dict.setdefault(req_key, None)
 
 
-        return torch.cat(
-            [
-                self.prefix_conditioner(cond_dict),
-                self.prefix_conditioner(uncond_dict),
-            ]
-        )
+        # prefix_conditioner handles dtypes internally via the fix in Conditioner.forward
+        cond_embedding = self.prefix_conditioner(cond_dict)
+        uncond_embedding = self.prefix_conditioner(uncond_dict)
 
-    def can_use_cudagraphs(self) -> bool: # As per original
-        # Current local _mamba_ssm.py might not be the CUDA graph compatible one from official mamba_ssm package
-        # For now, assume it refers to the class name string for type check.
-        return self.device.type == "cuda" and self.backbone.__class__.__name__ == "MambaSSMZonosBackbone"
+        return torch.cat([cond_embedding, uncond_embedding])
 
+
+    def can_use_cudagraphs(self) -> bool:
+        # Only the mamba-ssm backbone supports CUDA Graphs at the moment (as per reference)
+        return self.device.type == "cuda" and "_mamba_ssm" in str(self.backbone.__class__)
 
     @torch.inference_mode()
     def generate(
         self,
-        prefix_conditioning: torch.Tensor,  # [B_eff, cond_seq_len, d_model]
+        prefix_conditioning: torch.Tensor,  # [bsz_orig_x2_if_cfg, cond_seq_len, d_model]
         audio_prefix_codes: torch.Tensor | None = None,  # [bsz_orig, N_q, prefix_audio_seq_len]
         max_new_tokens: int = 86 * 30,
         cfg_scale: float = 2.0,
         batch_size: int = 1, # This is B_orig (original batch size before any CFG duplication)
-        sampling_params: dict = None,
+        sampling_params: dict = None, # Uses dict(min_p=0.1) if None
         progress_bar: bool = True,
-        disable_torch_compile: bool = True, # Default to True (disabled) for stability
+        disable_torch_compile: bool = True, # Temporarily disable torch.compile to bypass Inductor error
         callback: Callable[[torch.Tensor, int, int], bool] | None = None,
     ):
+        # Aligning with reference zonos/model.py generate method
         if sampling_params is None:
-            sampling_params = dict(min_p=0.1) # Default from original
+            sampling_params = dict(min_p=0.1)
 
-        # Original Zonos had: assert cfg_scale != 1, "TODO: add support for cfg_scale=1"
-        # My ZonosLocalVoice prepares prefix_conditioning based on cfg_active.
-        # If cfg_scale = 1.0 or 0.0, ZLV passes non-doubled prefix_conditioning.
-        # If cfg_scale is other, ZLV passes doubled prefix_conditioning.
-        # So, this method needs to know the effective batch for cache based on that.
+        # Reference code asserts cfg_scale != 1.
+        # If this assertion is critical, we should keep it or ensure logic handles cfg_scale=1 correctly.
+        # For now, assuming cfg_scale != 1 based on original assertion.
+        # If cfg_scale can be 1.0, then effective_cache_batch_size logic needs to be robust.
+        if cfg_scale == 1.0:
+            # This path might not be fully supported or intended by original Zonos generate.
+            # print("Warning: cfg_scale=1.0 might not be fully supported in this generation logic.")
+            # If cfg_scale is 1.0, prefix_conditioning should be [B_orig, C, D]
+            # and effective_cache_batch_size should be B_orig.
+            # The _decode_one_token and _prefill methods need to handle this.
+            # The current _decode_one_token has a TODO for cfg_scale=1.
+            # Let's assume for now the caller ensures cfg_scale != 1 if that's a requirement from original.
+             pass # Or raise ValueError("cfg_scale=1.0 is not currently supported by this generate method's structure.")
 
-        is_cfg_active = cfg_scale != 1.0 and cfg_scale != 0.0
 
-        if is_cfg_active:
-            if prefix_conditioning.shape[0] != batch_size * 2:
-                raise ValueError(f"For CFG (scale={cfg_scale}), prefix_conditioning batch dim ({prefix_conditioning.shape[0]}) must be 2 * batch_size ({batch_size}).")
-            effective_cache_batch_size = batch_size * 2
-        else: # No CFG, or unconditional only (cfg_scale=0)
-            if prefix_conditioning.shape[0] != batch_size:
-                 raise ValueError(f"Without CFG (scale={cfg_scale}), prefix_conditioning batch dim ({prefix_conditioning.shape[0]}) must be batch_size ({batch_size}).")
-            effective_cache_batch_size = batch_size
+        # Determine effective batch size for KV cache based on whether CFG is active.
+        # prefix_conditioning is already [B_eff, C, D] where B_eff is 2*B_orig if CFG, or B_orig if not.
+        # So, effective_cache_batch_size is simply prefix_conditioning.shape[0].
+        effective_cache_batch_size = prefix_conditioning.shape[0]
+
+        # Validate relationship between effective_cache_batch_size and batch_size (B_orig)
+        if cfg_scale != 1.0 and effective_cache_batch_size != batch_size * 2:
+            raise ValueError(f"For CFG (scale={cfg_scale}), prefix_conditioning batch dim ({effective_cache_batch_size}) must be 2 * batch_size ({batch_size}).")
+        if cfg_scale == 1.0 and effective_cache_batch_size != batch_size:
+            # This case needs careful handling in _decode_one_token and _prefill if supported.
+            # For now, this implies an inconsistency if cfg_scale=1 but prefix_conditioning was doubled.
+            raise ValueError(f"If cfg_scale=1.0, prefix_conditioning batch dim ({effective_cache_batch_size}) must be batch_size ({batch_size}).")
+
 
         prefix_audio_len = 0 if audio_prefix_codes is None else audio_prefix_codes.shape[2]
         device = self.device
 
+        # CUDA Graphs or torch.compile
         cg = self.can_use_cudagraphs() and not disable_torch_compile
-        decode_one_token_fn = self._decode_one_token # No torch.compile for now
-        # if not disable_torch_compile:
-        #    decode_one_token_fn = torch.compile(decode_one_token_fn, dynamic=True, disable=cg)
+        decode_one_token_fn = self._decode_one_token
+        if not disable_torch_compile: # Only compile if not disabled
+            decode_one_token_fn = torch.compile(decode_one_token_fn, dynamic=True, disable=cg)
 
-        unknown_token = -1 # From original; could use self.config.unknown_token if defined
+
+        unknown_token = -1 # Could use self.config.masked_token_id or a dedicated unknown
         audio_seq_len = prefix_audio_len + max_new_tokens
 
-        # Max length for KV cache
+        # Total sequence length for KV cache: condition length + audio (prefix+new) + num_codebooks (for delay pattern margin)
         total_cache_seq_len = prefix_conditioning.shape[1] + (audio_seq_len + self.autoencoder.num_codebooks)
 
-        with torch.device(device): # Ensures tensors created are on the model's device
+        with torch.device(device): # Ensure tensors created are on the model's device
             inference_params = self.setup_cache(batch_size=effective_cache_batch_size, max_seqlen=total_cache_seq_len)
             codes = torch.full((batch_size, self.autoencoder.num_codebooks, audio_seq_len),
                                unknown_token, dtype=torch.long, device=device)
@@ -358,9 +390,10 @@ class Zonos(nn.Module):
 
         delayed_codes = apply_delay_pattern(codes, self.masked_token_id) # Use self.masked_token_id
 
-        # Prefill phase (adapted from original)
-        # delayed_prefix_audio_codes is for B_orig
-        delayed_prefix_audio_input_for_prefill = delayed_codes[..., : prefix_audio_len + 1]
+        # Prefill phase
+        # delayed_prefix_audio_codes is for B_orig, covering the audio prefix part of delayed_codes
+        # The +1 is for the first token to be predicted based on the prefix.
+        delayed_prefix_audio_input_for_prefill = delayed_codes[..., : prefix_audio_len + 1] # [B_orig, N_q, PrefixAudio_S + 1]
 
         # _prefill handles CFG replication of embedded audio codes internally based on cfg_scale and prefix_conditioning batch
         logits = self._prefill(prefix_conditioning, delayed_prefix_audio_input_for_prefill, inference_params, cfg_scale)
@@ -370,108 +403,152 @@ class Zonos(nn.Module):
 
         # Initial fill of delayed_codes at the correct offset
         # This is the position for the first token *after* any audio_prefix
-        current_fill_idx_delayed = prefix_audio_len + 1 # Matches original `offset` logic start
+        current_fill_idx_delayed = prefix_audio_len + 1 # Index in delayed_codes to fill
 
-        # Using the refactored direct assignment:
-        target_frame_slice_prefill = delayed_codes[..., current_fill_idx_delayed]
+        # Fill the sampled token into the delayed_codes structure
+        # Using masked_scatter_ as in reference code's loop, adapted for prefill:
+        target_frame_slice_prefill = delayed_codes[..., current_fill_idx_delayed : current_fill_idx_delayed + 1] # Shape [B_orig, N_q, 1]
+        # Mask where frame is unknown_token or masked_token_id (should be, as it's the first predicted token)
         mask_prefill = (target_frame_slice_prefill == unknown_token) | (target_frame_slice_prefill == self.masked_token_id)
-        tokens_to_assign_prefill = next_token_sampled.squeeze(-1)
-        target_frame_slice_prefill[mask_prefill] = tokens_to_assign_prefill[mask_prefill]
+        target_frame_slice_prefill.masked_scatter_(mask_prefill, next_token_sampled)
 
-        # Update inference_params offset
-        # This is the length of the sequence processed by the backbone in prefill
+
+        # Update inference_params offset based on what backbone processed in prefill
+        # Length processed = prefix_conditioning length + length of audio prompt fed to prefill
         prefill_backbone_input_len = prefix_conditioning.shape[1] + delayed_prefix_audio_input_for_prefill.shape[2]
         inference_params.seqlen_offset += prefill_backbone_input_len
-        inference_params.lengths_per_sample += prefill_backbone_input_len # Add scalar to all in B_eff
+        # Update lengths_per_sample for all items in the effective batch
+        inference_params.lengths_per_sample[:] += prefill_backbone_input_len
 
-        # Autoregressive loop (adapted from original)
+
+        # Autoregressive loop
         logit_bias = torch.zeros_like(logits) # logits is [B_orig, N_q, Vocab]
-        logit_bias[:, 1:, self.eos_token_id] = -torch.inf
+        logit_bias[:, 1:, self.eos_token_id] = -torch.inf  # Only allow codebook 0 to predict EOS
 
         stopping = torch.zeros(batch_size, dtype=torch.bool, device=device) # For B_orig
 
-        # remaining_steps_after_eos logic from original Zonos
-        # This counts how many more codebooks need to be filled for a complete EOS pattern.
-        # Max steps in `delayed_codes` is `delayed_codes.shape[2] - 1`.
-        # `current_fill_idx_delayed` is the last index filled.
-        # Loop for `max_new_tokens - 1` more steps (since 1st new token is done)
+        # `remaining_steps` from reference code: number of steps to generate after EOS is first hit in codebook 0
+        # This ensures all codebooks get a chance to output their part of the EOS pattern.
+        # Max steps in `delayed_codes` is `delayed_codes.shape[2] - 1`. `offset` in ref is `current_fill_idx_delayed`.
+        # `max_steps` in ref is `delayed_codes.shape[2] - offset_at_start_of_loop`
+        # Here, loop for `max_new_tokens - 1` more steps (since 1st new token is done by prefill)
 
-        progress = tqdm(total=max_new_tokens, desc="Generating Audio Tokens", disable=not progress_bar, initial=1)
+        # remaining_steps_after_eos logic from reference Zonos:
+        # Counts how many more codebooks need to be filled for a complete EOS pattern.
+        # Initialize to max_new_tokens; when EOS is hit, set to num_codebooks. Decrement each step. Stop when <=0.
+        remaining_steps_counter = torch.full((batch_size,), max_new_tokens, device=device, dtype=torch.long)
+
+
+        progress_iter = tqdm(range(1, max_new_tokens), desc="Generating Audio Tokens", disable=not progress_bar)
 
         # `current_input_idx_delayed` is the index of the frame *just filled*, to be used as input for next token.
+        # After prefill, this is `current_fill_idx_delayed`.
         current_input_idx_delayed = current_fill_idx_delayed
 
-        for step_count in range(1, max_new_tokens): # Already did 1st token (step_count=0 effectively)
-            # Check overall stopping condition based on original logic's intent
-            # The original loop was `while torch.max(remaining_steps) > 0:`.
-            # Here, we need a robust way to check if all active (non-stopped) items are done.
-            # For now, a simple check; this might need refinement if EOS behavior is complex.
-            if torch.all(stopping): # Simplified: if all batches have triggered EOS at least once
-                # More accurate: if all batches have completed their num_codebooks steps post-EOS
-                # This requires tracking remaining_steps_after_eos per batch item.
-                # For now, let's rely on max_new_tokens or early exit by callback.
-                pass # The loop will run max_new_tokens times unless callback stops it.
 
+        for step_count in progress_iter: # Already did 1st token (step_count=0 effectively)
+
+            # Check stopping condition based on remaining_steps_counter
+            if torch.all(remaining_steps_counter <= 0):
+                break
+
+            # Prepare input for this step: the frame we just filled
             input_ids_for_decode = delayed_codes[..., current_input_idx_delayed : current_input_idx_delayed + 1] # [B_orig, N_q, 1]
 
+            # Update KV cache offset for the new token being processed
             inference_params.seqlen_offset += 1
-            inference_params.lengths_per_sample += 1
+            inference_params.lengths_per_sample[:] += 1 # Add 1 to all in B_eff
 
             logits_loop = decode_one_token_fn(input_ids_for_decode, inference_params, cfg_scale, allow_cudagraphs=cg)
-            logits_loop += logit_bias
+            logits_loop += logit_bias # Apply logit bias (e.g. prevent non-CB0 EOS)
 
             # Use previously generated tokens for repetition penalty context
+            # Context should include up to the token just before the one we are predicting now.
+            # `current_input_idx_delayed` is the last filled index.
+            # So context is up to and including `current_input_idx_delayed`.
             generated_tokens_context = delayed_codes[..., : current_input_idx_delayed + 1]
+
             next_token_sampled_loop = sample_from_logits(logits_loop,
                                                          generated_tokens=generated_tokens_context,
                                                          **sampling_params) # [B_orig, N_q, 1]
 
-            # EOS handling (simplified for now - original was more complex with remaining_steps)
-            eos_in_cb0_loop = (next_token_sampled_loop[:, 0, 0] == self.eos_token_id) & (~stopping)
-            stopping[eos_in_cb0_loop] = True
+            # EOS handling (aligned with reference zonos/model.py)
+            # Check if EOS is predicted in codebook 0 for any batch item that isn't already stopping.
+            eos_in_cb0_this_step = (next_token_sampled_loop[:, 0, 0] == self.eos_token_id) & (~stopping)
 
-            # In original, if stopping[i], next_token_sampled_loop[i] was filled with specific EOS/MASK pattern.
-            # This ensures the delay pattern completes correctly after EOS.
-            # This is important for `revert_delay_pattern`.
-            if torch.any(stopping): # If any item is stopping or has stopped
+            # Update stopping flags
+            stopping[eos_in_cb0_this_step] = True
+
+            # If EOS was hit for an item, set its remaining_steps_counter to num_codebooks
+            # This ensures N_q more tokens are generated to complete the EOS pattern across codebooks.
+            remaining_steps_counter[eos_in_cb0_this_step] = torch.minimum(
+                remaining_steps_counter[eos_in_cb0_this_step],
+                torch.tensor(self.autoencoder.num_codebooks, device=device, dtype=torch.long)
+            )
+
+
+            # If an item is stopping (EOS was hit previously or now), fill its `next_token_sampled_loop`
+            # with the appropriate MASKED_TOKEN/EOS_TOKEN pattern for the current codebook.
+            # This uses `remaining_steps_counter` to determine which codebook should get EOS.
+            if torch.any(stopping):
                  for i in range(batch_size):
-                     if stopping[i]:
-                         # Simplified fill: If stopping, make this frame's CB0 EOS, others MASKED
-                         # This is a placeholder. A proper `remaining_steps_after_eos` counter is needed
-                         # to replicate the original Zonos's exact EOS pattern filling over N_q steps.
-                         temp_fill = torch.full_like(next_token_sampled_loop[i], self.masked_token_id)
-                         temp_fill[0,0] = self.eos_token_id
-                         next_token_sampled_loop[i] = temp_fill
+                     if stopping[i]: # If this batch item is in stopping phase
+                         # `eos_codebook_idx` is the codebook that should receive EOS_TOKEN this step.
+                         # It's `num_codebooks - remaining_steps_counter[i]`.
+                         # Clamped to be valid index [0, num_codebooks-1].
+                         eos_cb_idx_for_item_i = self.autoencoder.num_codebooks - remaining_steps_counter[i]
+                         eos_cb_idx_for_item_i = torch.clamp(eos_cb_idx_for_item_i, 0, self.autoencoder.num_codebooks - 1)
+
+                         # Fill with MASKED_TOKEN by default
+                         temp_fill_eos_pattern = torch.full_like(next_token_sampled_loop[i], self.masked_token_id)
+                         # Set EOS_TOKEN at the determined codebook index
+                         temp_fill_eos_pattern[eos_cb_idx_for_item_i, 0] = self.eos_token_id
+                         next_token_sampled_loop[i] = temp_fill_eos_pattern
 
 
             # Update delayed_codes for the next position
-            current_fill_idx_delayed += 1 # This is the index where we write the new tokens
-            target_frame_slice_loop = delayed_codes[..., current_fill_idx_delayed]
+            current_fill_idx_delayed += 1 # This is the index in delayed_codes where we write the new tokens
+
+            target_frame_slice_loop = delayed_codes[..., current_fill_idx_delayed : current_fill_idx_delayed + 1]
+            # Mask where frame is unknown_token or masked_token_id
             mask_loop = (target_frame_slice_loop == unknown_token) | (target_frame_slice_loop == self.masked_token_id)
-            tokens_to_assign_loop = next_token_sampled_loop.squeeze(-1)
-            target_frame_slice_loop[mask_loop] = tokens_to_assign_loop[mask_loop]
+            target_frame_slice_loop.masked_scatter_(mask_loop, next_token_sampled_loop)
 
-            current_input_idx_delayed = current_fill_idx_delayed # Next input is what we just wrote
 
-            progress.update(1)
+            # Next input is what we just wrote
+            current_input_idx_delayed = current_fill_idx_delayed
+
+            # Decrement remaining_steps_counter for all items
+            remaining_steps_counter -= 1
+
+            # Callback
             if callback is not None:
-                if not callback(next_token_sampled_loop.clone(), step_count + 1, max_new_tokens):
+                # Callback receives the tokens generated *in this step*
+                if not callback(next_token_sampled_loop.clone(), step_count, max_new_tokens -1): # step_count is 1-indexed here
                     break
 
-        progress.close()
+        progress_iter.close()
 
         reverted_codes = revert_delay_pattern(delayed_codes)
 
         # Determine actual generated length in reverted_codes
         # `current_fill_idx_delayed` is the last index that was filled in `delayed_codes`.
-        # The number of valid frames in `delayed_codes` is `current_fill_idx_delayed + 1`.
-        # The length in `reverted_codes` corresponding to this is `(current_fill_idx_delayed + 1) - num_codebooks`.
-        final_reverted_len = (current_fill_idx_delayed + 1) - self.autoencoder.num_codebooks
+        # Number of valid frames in `delayed_codes` is `current_fill_idx_delayed + 1`.
+        # Length in `reverted_codes` is `(current_fill_idx_delayed + 1) - num_codebooks`.
+        # Or, simpler: `offset` from reference code was `current_fill_idx_delayed`.
+        # Final length in reference is `offset - num_codebooks`.
+        # Here, `current_fill_idx_delayed` is the *last index written to*.
+        # So, number of written frames is `current_fill_idx_delayed + 1`.
+        # The effective length of the audio sequence in `reverted_codes` is
+        # `(current_fill_idx_delayed + 1) - self.autoencoder.num_codebooks`.
+        # This needs to be non-negative.
+        final_reverted_len = max(0, (current_fill_idx_delayed + 1) - self.autoencoder.num_codebooks)
 
         out_codes = reverted_codes[..., :final_reverted_len]
-        out_codes.masked_fill_(out_codes >= self.eos_token_id, 0) # Use self.eos_token_id
 
-        self._cg_graph = None # Reset CUDA graph state as per original
+        # Mask tokens >= eos_token_id to 0 (or a pad token if different from 0)
+        # Reference uses 1024, which is self.eos_token_id.
+        out_codes.masked_fill_(out_codes >= self.eos_token_id, 0)
+
+        self._cg_graph = None # Reset CUDA graph state
         return out_codes
-
-
