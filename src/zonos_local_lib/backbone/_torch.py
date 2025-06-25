@@ -185,7 +185,8 @@ class Attention(nn.Module):
 
         y = y.transpose(1, 2).contiguous().view(batch_size, seqlen, q_size)
 
-        y = self.out_proj(y)
+        # Ensure y (bfloat16 from SDPA) matches out_proj's weight dtype (likely float32)
+        y = self.out_proj(y.to(self.out_proj.weight.dtype))
         return y
 
 
