@@ -9,6 +9,8 @@ from tqdm import tqdm
 
 from .autoencoder import DACAutoencoder
 from .backbone import BACKBONES
+from .backbone._mamba_ssm import MambaSSMZonosBackbone # Import for isinstance check
+# from .backbone._torch import TorchZonosBackbone # Optional: if TorchZonosBackbone is also checked by name
 from .codebook_pattern import apply_delay_pattern, revert_delay_pattern
 from .conditioning import PrefixConditioner # Assuming make_cond_dict is also in conditioning or handled by Gradio
 from .config import InferenceParams, ZonosConfig
