@@ -328,10 +328,14 @@ class ResNet293_based(nn.Module):
 
         # ResNet293 (2D conv) expects [B, C_in, H, W]. Here C_in=1.
         # x.unsqueeze(dim=1) changes [B, M, T] to [B, 1, M, T]
-        x_for_resnet = x.unsqueeze(dim=1)
-        print(f"[DEBUG SpeakerCloning] Shape after x.unsqueeze(dim=1): {x_for_resnet.shape if hasattr(x_for_resnet, 'shape') else type(x_for_resnet)}")
+        # x is [Mel_bins, Time_frames] e.g. [80, 4], according to logs.
+        # ResNet expects [Batch, Channels, Height, Width].
+        # Height = Mel_bins, Width = Time_frames. Channels = 1. Batch = 1.
+        # So, target shape is [1, 1, 80, 4].
+        x_for_resnet = x.unsqueeze(0).unsqueeze(1)
+        print(f"[DEBUG SpeakerCloning] Shape after x.unsqueeze(0).unsqueeze(1): {x_for_resnet.shape if hasattr(x_for_resnet, 'shape') else type(x_for_resnet)}") # Updated print statement
 
-        x = self.front(x_for_resnet) # x becomes [B, 1, Mel_bins, T_frames] -> ResNet output [B, C_out, Mel_bins/8, T_frames/8]
+        x = self.front(x_for_resnet) # x_for_resnet should now be [1, 1, Mel_bins, T_frames]
         x = self.pooling(x) # ASP output [B, pooling.out_dim_calculated]
         if self.drop:
             x = self.drop(x)
