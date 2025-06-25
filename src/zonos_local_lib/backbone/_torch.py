@@ -81,34 +81,31 @@ class TorchZonosBackbone(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, inference_params: InferenceParams) -> torch.Tensor:
         current_device = hidden_states.device
-        input_pos = torch.arange(0, hidden_states.shape[1], device=current_device)
 
-        # Ensure lengths_per_sample is on the same device as input_pos for the addition
-        lengths_per_sample_on_device = inference_params.lengths_per_sample.to(current_device)
-        input_pos = input_pos + lengths_per_sample_on_device.unsqueeze(-1)
+        current_seq_len = hidden_states.shape[1]
+        start_pos = inference_params.seqlen_offset
 
-        # self.freqs_cis should now be on current_device due to changes in allocate_inference_cache
-        # However, input_pos might still be on a different device if hidden_states.device was different
-        # from self.freqs_cis.device at the time of freqs_cis creation.
-        # Safest is to ensure input_pos is on the same device as self.freqs_cis OR input_pos is CPU.
-        # Since self.freqs_cis is now moved to module_device, input_pos should also be on module_device.
-        # hidden_states.device (current_device) should be module_device.
+        # Create positions for the current sequence segment for RoPE
+        # Ensure positions are created on the same device as self.freqs_cis for indexing
+        # self.freqs_cis is expected to be on module_device (e.g., cuda if model is on cuda)
+        if not hasattr(self, 'freqs_cis'):
+            # This should not happen if allocate_inference_cache was called, which is a prerequisite
+            # for forward with inference_params.
+            raise RuntimeError("freqs_cis not initialized. Call allocate_inference_cache first.")
 
-        # If self.freqs_cis is guaranteed to be on current_device:
-        freqs_cis_for_indexing = self.freqs_cis
-        indices_for_indexing = input_pos
+        positions = torch.arange(start_pos, start_pos + current_seq_len, device=self.freqs_cis.device)
 
-        # If there's a chance self.freqs_cis is on CPU and input_pos on CUDA (or vice-versa in error):
-        if freqs_cis_for_indexing.device != indices_for_indexing.device:
-            # This case should ideally not happen if allocate_inference_cache sets freqs_cis to current_device
-            # and current_device is consistent. But as a safeguard:
-            indices_for_indexing = indices_for_indexing.to(freqs_cis_for_indexing.device)
+        # Slice self.freqs_cis to get frequencies for the current range of positions
+        # freqs_cis_for_layer will have shape [current_seq_len, num_rope_features, 2]
+        freqs_cis_for_layer = self.freqs_cis[positions]
 
-        selected_freqs_cis = freqs_cis_for_indexing[indices_for_indexing]
-        freqs_cis = selected_freqs_cis.expand(hidden_states.shape[0], -1, -1, -1)
+        # Ensure freqs_cis_for_layer is on the same device as hidden_states if different
+        # (though self.freqs_cis should already be on current_device via allocate_inference_cache logic)
+        freqs_cis_for_layer = freqs_cis_for_layer.to(current_device)
+
 
         for i, layer in enumerate(self.layers):
-            hidden_states = layer(hidden_states, inference_params, freqs_cis)
+            hidden_states = layer(hidden_states, inference_params, freqs_cis_for_layer)
         return self.norm_f(hidden_states)
 
 
