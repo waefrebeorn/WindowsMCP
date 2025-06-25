@@ -10,7 +10,8 @@ class DACAutoencoder:
     def __init__(self):
         super().__init__()
         # Load using AutoModel, let transformers figure out the correct class
-        self.dac = AutoModel.from_pretrained("descript/dac_44khz")
+        # Add trust_remote_code=True
+        self.dac = AutoModel.from_pretrained("descript/dac_44khz", trust_remote_code=True)
         # It's good practice to check if the loaded model is what we expect,
         # though for well-known models, AutoModel is usually reliable.
         # You might need to ensure methods like .encode, .decode, .quantizer.n_codebooks,
