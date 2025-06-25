@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 from .autoencoder import DACAutoencoder
 from .backbone import BACKBONES
-from .backbone._mamba_ssm import MambaSSMZonosBackbone # Import for isinstance check
 # from .backbone._torch import TorchZonosBackbone # Optional: if TorchZonosBackbone is also checked by name
 from .codebook_pattern import apply_delay_pattern, revert_delay_pattern
 from .conditioning import PrefixConditioner # Assuming make_cond_dict is also in conditioning or handled by Gradio
@@ -258,7 +257,8 @@ class Zonos(nn.Module):
         classifier-free guidance if `cfg_scale != 1.0`.
         """
         # Backbone might take inference_params or not depending on type
-        if isinstance(self.backbone, MambaSSMZonosBackbone): # Mamba uses it
+        # Check class name string to avoid direct import of MambaSSMZonosBackbone
+        if self.backbone.__class__.__name__ == "MambaSSMZonosBackbone": # Mamba uses it
             last_hidden_states_out = self.backbone(hidden_states, inference_params)
         else: # Torch transformer backbone in example doesn't use inference_params in its forward directly in this way for single step
               # but the kv_cache is updated via inference_params.
