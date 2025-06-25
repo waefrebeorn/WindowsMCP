@@ -426,7 +426,7 @@ class ZonosDashboardWindow(ctk.CTkToplevel):
             self.master_app.display_message_popup("Input Error", "Please enter some text to synthesize.", "error")
             return
 
-        if not self.current_speaker_embedding:
+        if self.current_speaker_embedding is None:
             # Option: try to use default_voice from ZonosEngine if set, or prompt to generate.
             # For now, require explicit embedding generation in this UI.
             self.synthesis_status_label.configure(text="Status: No speaker embedding. Please generate one first.")
