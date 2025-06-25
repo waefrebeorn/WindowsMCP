@@ -4,8 +4,8 @@ from typing import Any, Literal, Iterable
 import torch
 import torch.nn as nn
 
-from .config import PrefixConditionerConfig # Corrected import
-from .utils import DEFAULT_DEVICE # Corrected import
+from zonos.config import PrefixConditionerConfig
+from zonos.utils import DEFAULT_DEVICE
 
 
 class Conditioner(nn.Module):
@@ -47,6 +47,22 @@ class Conditioner(nn.Module):
             return self.uncond_vector.data.view(1, 1, -1)
 
         cond = self.apply_cond(*inputs)
+
+        # Ensure 'cond' tensor has the same dtype as the projection layer's weights
+        # if the projection layer is a Linear layer or an MLP (Sequential containing Linear).
+        if isinstance(self.project, nn.Linear):
+            if hasattr(self.project, 'weight') and cond.dtype != self.project.weight.dtype:
+                cond = cond.to(self.project.weight.dtype)
+        elif isinstance(self.project, nn.Sequential):
+            # Find the first linear layer in the sequential to get the target dtype
+            target_dtype = None
+            for layer in self.project:
+                if isinstance(layer, nn.Linear) and hasattr(layer, 'weight'):
+                    target_dtype = layer.weight.dtype
+                    break
+            if target_dtype and cond.dtype != target_dtype:
+                cond = cond.to(target_dtype)
+
         cond = self.project(cond)
         return cond
 
@@ -57,28 +73,15 @@ import sys
 import re
 import unicodedata
 
-print("[DEBUG_IMPORT] Attempting to import inflect...")
 import inflect
-print("[DEBUG_IMPORT] Successfully imported inflect.")
-
-# import torch # already imported
-# import torch.nn as nn # already imported
-
-print("[DEBUG_IMPORT] Attempting to import number2kanji from kanjize...")
+import torch
+import torch.nn as nn
 from kanjize import number2kanji
-print("[DEBUG_IMPORT] Successfully imported number2kanji from kanjize.")
-
-print("[DEBUG_IMPORT] Attempting to import EspeakBackend from phonemizer.backend...")
 from phonemizer.backend import EspeakBackend
-print("[DEBUG_IMPORT] Successfully imported EspeakBackend from phonemizer.backend.")
-
-print("[DEBUG_IMPORT] Attempting to import Dictionary, SplitMode from sudachipy...")
 from sudachipy import Dictionary, SplitMode
-print("[DEBUG_IMPORT] Successfully imported Dictionary, SplitMode from sudachipy.")
 
-# PHONEMIZER_ESPEAK_LIBRARY configuration is now handled centrally in main.py
-# to ensure it's set before any module (like phonemizer) that might need it is imported.
-# The main.py script calls _configure_espeak_for_phonemizer() at its start.
+if sys.platform == "darwin":
+    os.environ["PHONEMIZER_ESPEAK_LIBRARY"] = "/opt/homebrew/lib/libespeak-ng.dylib"
 
 # --- Number normalization code from https://github.com/daniilrobnikov/vits2/blob/main/text/normalize_numbers.py ---
 
@@ -173,10 +176,10 @@ def get_symbol_ids(text: str) -> list[int]:
     return list(map(_get_symbol_id, text))
 
 
-def tokenize_phonemes(phonemes_list: list[str]) -> tuple[torch.Tensor, list[int]]: # Renamed phonemes to phonemes_list to avoid conflict
-    phoneme_ids = [[BOS_ID, *get_symbol_ids(p), EOS_ID] for p in phonemes_list] # Used p here
+def tokenize_phonemes(phonemes: list[str]) -> tuple[torch.Tensor, list[int]]:
+    phoneme_ids = [[BOS_ID, *get_symbol_ids(phonemes), EOS_ID] for phonemes in phonemes]
     lengths = list(map(len, phoneme_ids))
-    longest = max(lengths) if lengths else 0
+    longest = max(lengths)
     phoneme_ids = [[PAD_ID] * (longest - len(ids)) + ids for ids in phoneme_ids]
     return torch.tensor(phoneme_ids), lengths
 
@@ -203,7 +206,8 @@ def clean(texts: list[str], languages: list[str]) -> list[str]:
 def get_backend(language: str) -> "EspeakBackend":
     import logging
 
-    # from phonemizer.backend import EspeakBackend # already imported
+    from phonemizer.backend import EspeakBackend
+
     logger = logging.getLogger("phonemizer")
     backend = EspeakBackend(
         language,
@@ -222,8 +226,8 @@ def phonemize(texts: list[str], languages: list[str]) -> list[str]:
     batch_phonemes = []
     for text, language in zip(texts, languages):
         backend = get_backend(language)
-        phonemes_output = backend.phonemize([text], strip=True) # Renamed phonemes to phonemes_output
-        batch_phonemes.append(phonemes_output[0])
+        phonemes = backend.phonemize([text], strip=True)
+        batch_phonemes.append(phonemes[0])
 
     return batch_phonemes
 
@@ -241,8 +245,8 @@ class EspeakPhonemeConditioner(Conditioner):
         """
         device = self.phoneme_embedder.weight.device
 
-        phonemes_data = phonemize(texts, languages) # Renamed phonemes to phonemes_data
-        phoneme_ids, _ = tokenize_phonemes(phonemes_data) # Used phonemes_data
+        phonemes = phonemize(texts, languages)
+        phoneme_ids, _ = tokenize_phonemes(phonemes)
         phoneme_embeds = self.phoneme_embedder(phoneme_ids.to(device))
 
         return phoneme_embeds
@@ -319,41 +323,10 @@ class PrefixConditioner(Conditioner):
         conds = []
         for conditioner in self.conditioners:
             conds.append(conditioner(cond_dict.get(conditioner.name)))
-        max_bsz = max(map(len, conds)) if conds else 1 # Handle empty conds
-        # Ensure conds is not empty before proceeding with assertions or expansions
-        if conds:
-            assert all(c.shape[0] in (max_bsz, 1) for c in conds)
-            conds = [c.expand(max_bsz, -1, -1) for c in conds]
-            return self.norm(self.project(torch.cat(conds, dim=-2)))
-        else: # Handle case where there are no conditioners or all are unconditional
-            # This might need specific handling based on expected behavior if all conditioners are optional
-            # For now, return a zero tensor or handle as per specific logic if this case is valid.
-            # Assuming project can handle an empty sum or this path isn't typically hit with an empty list.
-            # If an error should be raised or a default tensor returned, that logic would go here.
-            # For now, to prevent error with torch.cat on empty list:
-            if self.uncond_vector is not None: # If the PrefixConditioner itself can be uncond
-                 return self.uncond_vector.data.view(1, 1, -1).expand(max_bsz, -1, -1) # Should be 1, not max_bsz if no other conds
-            # Fallback or error if no conditions and no uncond_vector for PrefixConditioner
-            # This state might indicate a configuration error.
-            # Let's assume for now an empty list of conditions means an empty tensor or error.
-            # For safety, let's return an empty tensor of the correct dimension, if that's a valid interpretation.
-            # This part is speculative without knowing the exact design intent for zero conditioners.
-            # Defaulting to a behavior that avoids crashing; requires design confirmation.
-            # One possible interpretation: If no actual conditions are processed, maybe it means no prefix.
-            # However, self.project likely expects some input.
-            # A simple fix to avoid torch.cat error if conds is empty:
-            if not conds and self.uncond_vector is None: # No specific conditions to concat and no uncond prefix
-                 # This case needs clarification. For now, let's assume it should pass a zero tensor if project expects input.
-                 # Or, if self.project is Identity, an empty tensor might be problematic later.
-                 # A more robust approach might involve how `uncond_type` for PrefixConditioner itself is handled.
-                 # If this path is reached, it means all sub-conditioners were optional and none were provided.
-                 # Returning a zero tensor of output_dim. Batch size and sequence length are tricky here.
-                 # Let's assume batch_size 1, seq_len 1 for such a case.
-                 return torch.zeros(1, 1, self.output_dim, device=DEFAULT_DEVICE) # Speculative
-            # If conds was not empty, the original return self.norm(self.project(torch.cat(conds, dim=-2))) is fine.
-            # The issue is only if conds is empty.
-            # The above return is for the case conds is empty AND self.uncond_vector is None.
-            # If self.uncond_vector is not None, it's handled by the initial check in Conditioner.forward
+        max_bsz = max(map(len, conds))
+        assert all(c.shape[0] in (max_bsz, 1) for c in conds)
+        conds = [c.expand(max_bsz, -1, -1) for c in conds]
+        return self.norm(self.project(torch.cat(conds, dim=-2)))
 
 
 supported_language_codes = [
@@ -393,12 +366,7 @@ def make_cond_dict(
     pitch_std: float = 20.0,
 
     # Speaking rate in phonemes per minute (0 to 40). 30 is very fast, 10 is slow.
-    # This seems to be a misinterpretation in the original comment.
-    # Zonos model.py generate() has `max_new_tokens: int = 86 * 30`. 86 Hz is ~5160 tokens/min.
-    # The `rate` argument in zonos_docker_entry.py is a multiplier (e.g. 1.0 for normal).
-    # Let's assume this 'speaking_rate' is intended to be a multiplier like the 'rate' arg.
-    # Typical range for rate multiplier: 0.5 (slow) to 2.0 (fast). Defaulting to 1.0.
-    speaking_rate: float = 1.0, # Adjusted interpretation and default
+    speaking_rate: float = 15.0,
 
     # Target VoiceQualityScore for the generated speech (0.5 to 0.8).
     #   A list of values must be provided which represent each 1/8th of the audio.
@@ -413,88 +381,41 @@ def make_cond_dict(
     dnsmos_ovrl: float = 4.0,
     # Only used for the hybrid model
     speaker_noised: bool = False,
-    unconditional_keys: Iterable[str] = {"vqscore_8", "dnsmos_ovrl"}, # Default from Gradio
+    unconditional_keys: Iterable[str] = {"vqscore_8", "dnsmos_ovrl"},
     device: torch.device | str = DEFAULT_DEVICE,
 ) -> dict:
     """
     A helper to build the 'cond_dict' that the model expects.
     By default, it will generate a random speaker embedding
     """
-    # Ensure language is valid, default to en-us if not.
-    # The original code asserted, but it might be better to default or warn.
-    if language.lower() not in supported_language_codes:
-        print(f"WARNING: Language code '{language}' not in supported list. Defaulting to 'en-us'.", file=sys.stderr)
-        language = "en-us"
-
+    assert language.lower() in supported_language_codes, "Please pick a supported language"
 
     language_code_to_id = {lang: i for i, lang in enumerate(supported_language_codes)}
 
-    cond_dict_prep = { # Renamed to avoid modifying the input `cond_dict` if it were passed
-        "espeak": ([text], [language]), # espeak conditioner expects a list of texts and list of languages
-        "speaker": speaker, # speaker embedding tensor
-        "emotion": emotion, # list of floats for emotion vector
-        "fmax": fmax, # float
-        "pitch_std": pitch_std, # float
-        "speaking_rate": speaking_rate, # float (rate multiplier)
-        "language_id": language_code_to_id[language.lower()], # integer id
-        "vqscore_8": vqscore_8, # list of floats
-        "ctc_loss": ctc_loss, # float
-        "dnsmos_ovrl": dnsmos_ovrl, # float
-        "speaker_noised": int(speaker_noised), # integer (0 or 1)
+    cond_dict = {
+        "espeak": ([text], [language]),
+        "speaker": speaker,
+        "emotion": emotion,
+        "fmax": fmax,
+        "pitch_std": pitch_std,
+        "speaking_rate": speaking_rate,
+        "language_id": language_code_to_id[language],
+        "vqscore_8": vqscore_8,
+        "ctc_loss": ctc_loss,
+        "dnsmos_ovrl": dnsmos_ovrl,
+        "speaker_noised": int(speaker_noised),
     }
 
-    # Remove keys that are meant to be unconditional
-    final_cond_dict = {}
-    for k, v in cond_dict_prep.items():
-        if k not in unconditional_keys:
-            final_cond_dict[k] = v
-        # else: # Optionally print which keys are being made unconditional
-            # print(f"INFO: Key '{k}' is being made unconditional.", file=sys.stderr)
+    for k in unconditional_keys:
+        cond_dict.pop(k, None)
 
-
-    # Convert numericals and lists to tensors on the specified device
-    for k, v in final_cond_dict.items():
-        if k == "espeak": # Special handling for espeak as it's (list[str], list[str])
-            # This is passed as is to EspeakPhonemeConditioner
-            continue
+    for k, v in cond_dict.items():
         if isinstance(v, (float, int, list)):
-            try:
-                v_tensor = torch.tensor(v, device=device)
-            except TypeError as e: # Handles cases like list of mixed types if any, or non-numeric lists
-                print(f"WARNING: Could not convert value for key '{k}' to tensor: {v}. Error: {e}", file=sys.stderr)
-                # Decide on fallback: skip this key, or use a default tensor, or re-raise
-                continue # Skip this problematic key for now
-        elif isinstance(v, torch.Tensor):
-            v_tensor = v.to(device)
-        else: # value is None (e.g. speaker not provided) or already in a non-convertible format
-            final_cond_dict[k] = v # Keep as is (e.g. None)
-            continue
+            v = torch.tensor(v)
+        if isinstance(v, torch.Tensor):
+            cond_dict[k] = v.view(1, 1, -1).to(device)
 
-        # Reshape to [batch_size, seq_len, features] where batch_size and seq_len are 1 for scalar-like conditioners
-        if v_tensor.ndim == 0: # scalar
-            v_tensor = v_tensor.view(1, 1, 1)
-        elif v_tensor.ndim == 1: # list like [0.1, 0.2, 0.3]
-            v_tensor = v_tensor.view(1, 1, -1)
-        # If ndim is 2 or more, assume it's already correctly shaped [batch, seq, feat] or [batch, feat]
-        # or specific shapes like speaker embedding.
-        # The example shows view(1,1,-1) for all, which might be too aggressive for pre-shaped tensors.
-        # Let's stick to the original logic for this part mostly.
-        # The original code did: v.view(1, 1, -1).to(device) for all tensors.
+        if k == "emotion":
+            cond_dict[k] /= cond_dict[k].sum(dim=-1)
 
-        final_cond_dict[k] = v_tensor.view(1, 1, -1) # Ensure [1,1,N] shape as per original
-
-        if k == "emotion" and final_cond_dict[k] is not None: # Normalize emotion tensor if present
-            current_emotion_tensor = final_cond_dict[k]
-            sum_emotion = current_emotion_tensor.sum(dim=-1, keepdim=True)
-            # Avoid division by zero if sum is zero (e.g. all zeros provided)
-            if sum_emotion.abs().item() > 1e-6 : # Check if sum is significantly non-zero
-                 final_cond_dict[k] = current_emotion_tensor / sum_emotion
-            else:
-                # Handle all-zero emotion vector, e.g. set to uniform or warn
-                print("WARNING: Emotion vector sums to zero, cannot normalize. Using as is or consider a default.", file=sys.stderr)
-                # Optionally, set to a default uniform distribution if sum is zero
-                # num_emotions = current_emotion_tensor.shape[-1]
-                # final_cond_dict[k] = torch.full_like(current_emotion_tensor, 1.0/num_emotions)
-
-
-    return final_cond_dict
+    return cond_dict
