@@ -81,7 +81,6 @@ class TorchZonosBackbone(nn.Module):
         current_device = hidden_states.device
         current_seq_len = hidden_states.shape[1]
         start_pos = inference_params.seqlen_offset
-
         if not hasattr(self, 'freqs_cis'):
             # This should not happen if allocate_inference_cache was called
             raise RuntimeError("freqs_cis not initialized. Call allocate_inference_cache first.")
