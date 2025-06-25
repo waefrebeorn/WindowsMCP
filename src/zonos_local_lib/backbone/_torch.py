@@ -81,6 +81,7 @@ class TorchZonosBackbone(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, inference_params: InferenceParams) -> torch.Tensor:
         current_device = hidden_states.device
+
         current_seq_len = hidden_states.shape[1]
         start_pos = inference_params.seqlen_offset
 
@@ -101,6 +102,7 @@ class TorchZonosBackbone(nn.Module):
         # Ensure freqs_cis_for_layer is on the same device as hidden_states if different
         # (though self.freqs_cis should already be on current_device via allocate_inference_cache logic)
         freqs_cis_for_layer = freqs_cis_for_layer.to(current_device)
+
 
         for i, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states, inference_params, freqs_cis_for_layer)
