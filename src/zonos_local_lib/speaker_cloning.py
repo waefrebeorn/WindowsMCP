@@ -493,8 +493,8 @@ class SpeakerEmbedding(nn.Module): # Wrapper for ResNet293_based model
         if os.path.exists(ckpt_path):
             try:
                 state_dict = torch.load(ckpt_path, map_location="cpu", weights_only=True) # Load to CPU first
-                self.model.load_state_dict(state_dict)
-                print(f"INFO: SpeakerEmbedding model loaded from {ckpt_path}")
+                self.model.load_state_dict(state_dict, strict=False) # Set strict=False
+                print(f"INFO: SpeakerEmbedding model loaded from {ckpt_path} (strict=False)")
             except Exception as e:
                 print(f"WARNING: Failed to load SpeakerEmbedding checkpoint from {ckpt_path}: {e}. Model is initialized with random weights.")
         else:
@@ -522,13 +522,25 @@ class SpeakerEmbedding(nn.Module): # Wrapper for ResNet293_based model
         return torchaudio.transforms.Resample(orig_sample_rate, target_sample_rate).to(self.target_device)
 
     def prepare_input(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor:
-        # wav: [B, L] or [L]
-        if wav.ndim == 1:
-            wav = wav.unsqueeze(0) # Add batch dim: [1, L]
-        if wav.shape[0] > 1 and wav.ndim == 2 : # Multi-channel audio in batch, e.g. [B, Channels, L]
-            wav = wav.mean(1) # Average channels -> [B, L]
-        elif wav.ndim > 2 : # E.g. [B, C, L]
-             wav = wav.mean(1) # Average channels
+        # wav: Can be [L], [C, L], or [B, C, L], or [B, L]
+        # Goal: Get to [B, L_mono_resampled_padded] on self.target_device
+
+        # 1. Ensure Batch dimension and monoize if multichannel
+        if wav.ndim == 1:  # [L]
+            wav = wav.unsqueeze(0).unsqueeze(0)  # -> [1, 1, L] (Batch, Channel, Length)
+        elif wav.ndim == 2: # Could be [C, L] or [B, L]
+            if wav.shape[0] > 1 and wav.shape[1] > 1024: # Heuristic: if first dim > 1 and second dim is long, assume [C,L]
+                wav = wav.mean(dim=0, keepdim=True).unsqueeze(0) # -> [1, 1, L_mono]
+            else: # Assume [B, L]
+                wav = wav.unsqueeze(1) # -> [B, 1, L]
+        elif wav.ndim == 3: # [B, C, L]
+            if wav.shape[1] > 1: # If multichannel
+                wav = wav.mean(dim=1, keepdim=True) # -> [B, 1, L_mono]
+        # Now wav should be [B, 1, L]
+
+        # Reshape to [B, L] for resampler if it was [B, 1, L]
+        if wav.ndim == 3 and wav.shape[1] == 1:
+            wav = wav.squeeze(1) # -> [B, L]
 
         # Ensure wav is on the correct device before resampling
         wav = wav.to(self.target_device)
@@ -540,13 +552,17 @@ class SpeakerEmbedding(nn.Module): # Wrapper for ResNet293_based model
         # Ensure minimum length for STFT (n_fft for logFbankCal is 512 by default)
         # This n_fft is hardcoded in logFbankCal's default.
         # If logFbankCal's n_fft changes, this might need to adapt or get n_fft from featCal.
-        min_len = 512 # Corresponds to n_fft in logFbankCal
-        if wav.shape[-1] < min_len:
-            padding_needed = min_len - wav.shape[-1]
-            wav = torch.nn.functional.pad(wav, (0, padding_needed), mode='constant', value=0)
-            # print(f"DEBUG: Padded waveform from {wav.shape[-1]-padding_needed} to {wav.shape[-1]} samples.")
+        # Ensure minimum length for STFT (n_fft for logFbankCal is 512 by default)
+        # This n_fft is hardcoded in logFbankCal's default.
+        # If logFbankCal's n_fft changes, this might need to adapt or get n_fft from featCal.
+        # min_len = 512 # Corresponds to n_fft in logFbankCal
+        # if wav.shape[-1] < min_len:
+        #     padding_needed = min_len - wav.shape[-1]
+        #     wav = torch.nn.functional.pad(wav, (0, padding_needed), mode='constant', value=0)
+        #     # print(f"DEBUG: Padded waveform from {wav.shape[-1]-padding_needed} to {wav.shape[-1]} samples.")
+        # Rely on MelSpectrogram's internal padding
 
-        return wav # wav is now [B, L_resampled_and_padded] on self.target_device
+        return wav # wav is now [B, L_resampled] on self.target_device
 
     def forward(self, wav: torch.Tensor, sample_rate: int) -> torch.Tensor: # wav: Host tensor
         # Prepare input handles device placement and resampling
