@@ -4,6 +4,7 @@ from typing import Any, Literal, Iterable
 import torch
 import torch.nn as nn
 
+
 from .config import PrefixConditionerConfig
 from .utils import DEFAULT_DEVICE
 
