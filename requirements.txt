@@ -26,7 +26,7 @@ soundfile
 numpy
 customtkinter
 word2number
-mamba-ssm
+
 # Zonos specific dependencies (and its sub-dependencies)
 huggingface-hub
 tqdm
@@ -35,4 +35,5 @@ inflect
 kanjize
 phonemizer # Requires espeak-ng system library
 SudachiPy
+sudachidict_full # Dictionary for SudachiPy (Zonos requires the full version)
 einops # Often a dependency for transformer models, Zonos might need it

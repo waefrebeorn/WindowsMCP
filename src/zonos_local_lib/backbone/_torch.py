@@ -81,7 +81,6 @@ class TorchZonosBackbone(nn.Module):
 
     def forward(self, hidden_states: torch.Tensor, inference_params: InferenceParams) -> torch.Tensor:
         current_device = hidden_states.device
-
         current_seq_len = hidden_states.shape[1]
         start_pos = inference_params.seqlen_offset
 
@@ -102,7 +101,6 @@ class TorchZonosBackbone(nn.Module):
         # Ensure freqs_cis_for_layer is on the same device as hidden_states if different
         # (though self.freqs_cis should already be on current_device via allocate_inference_cache logic)
         freqs_cis_for_layer = freqs_cis_for_layer.to(current_device)
-
 
         for i, layer in enumerate(self.layers):
             hidden_states = layer(hidden_states, inference_params, freqs_cis_for_layer)
@@ -162,7 +160,9 @@ class Attention(nn.Module):
 
         q, k, v = map(lambda x: x.transpose(1, 2), (q, k, v))
 
-        y = F.scaled_dot_product_attention(q, k, v, is_causal=seqlen > 1, enable_gqa=True)
+        # For PyTorch versions like 2.7.1, enable_gqa is not a valid argument.
+        # GQA is handled by broadcasting if num_heads_kv < num_heads.
+        y = F.scaled_dot_product_attention(q, k, v, is_causal=seqlen > 1)
 
         y = y.transpose(1, 2).contiguous().view(batch_size, seqlen, q_size)
 
