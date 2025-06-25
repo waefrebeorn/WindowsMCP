@@ -9,6 +9,7 @@ from tqdm import tqdm
 
 from .autoencoder import DACAutoencoder
 from .backbone import BACKBONES
+# from .backbone._torch import TorchZonosBackbone # Optional: if TorchZonosBackbone is also checked by name
 from .codebook_pattern import apply_delay_pattern, revert_delay_pattern
 from .conditioning import PrefixConditioner # Assuming make_cond_dict is also in conditioning or handled by Gradio
 from .config import InferenceParams, ZonosConfig
@@ -256,7 +257,8 @@ class Zonos(nn.Module):
         classifier-free guidance if `cfg_scale != 1.0`.
         """
         # Backbone might take inference_params or not depending on type
-        if isinstance(self.backbone, MambaSSMZonosBackbone): # Mamba uses it
+        # Check class name string to avoid direct import of MambaSSMZonosBackbone
+        if self.backbone.__class__.__name__ == "MambaSSMZonosBackbone": # Mamba uses it
             last_hidden_states_out = self.backbone(hidden_states, inference_params)
         else: # Torch transformer backbone in example doesn't use inference_params in its forward directly in this way for single step
               # but the kv_cache is updated via inference_params.
@@ -536,15 +538,23 @@ class Zonos(nn.Module):
         delayed_idx_offset = prefix_audio_len + 1
 
         # Update `delayed_codes` with the first sampled tokens
-        # Ensure `next_tokens_sampled` aligns with `frame` for masked_scatter_
-        frame_to_fill = delayed_codes[..., delayed_idx_offset : delayed_idx_offset + 1] # [B_orig, N_q, 1]
-        # We only fill where `frame_to_fill` was `unknown_token` or `masked_token_id`
-        # This ensures we don't overwrite parts of a given audio prefix that were not unknown.
-        # However, `codes` was init with `unknown_token`, so `delayed_codes` also has it.
-        # So, this condition `frame_to_fill == unknown_token` should be true for new parts.
-        mask_for_scatter = (frame_to_fill == unknown_token) | (frame_to_fill == self.config.masked_token_id)
-        frame_to_fill.masked_scatter_(mask_for_scatter, next_tokens_sampled)
-        # This updates `delayed_codes` in place.
+        # Refactored update logic:
+        # `delayed_idx_offset` is the index of the frame we want to fill in `delayed_codes`.
+        # `next_tokens_sampled` has shape [B_orig, N_q, 1]
+
+        # Get the target frame directly from delayed_codes (shape [B_orig, N_q])
+        current_target_frame_at_offset = delayed_codes[..., delayed_idx_offset]
+
+        # Create mask based on this frame (shape [B_orig, N_q])
+        mask_for_update = (current_target_frame_at_offset == unknown_token) | \
+                          (current_target_frame_at_offset == self.config.masked_token_id)
+
+        # Prepare source tokens by squeezing the last dimension (shape [B_orig, N_q])
+        tokens_to_assign = next_tokens_sampled.squeeze(-1)
+
+        # Update the target frame in delayed_codes using the mask.
+        # This updates `delayed_codes` in-place because current_target_frame_at_offset is a view.
+        current_target_frame_at_offset[mask_for_update] = tokens_to_assign[mask_for_update]
 
         # --- Autoregressive Generation Loop ---
         # `logit_bias` to prevent EOS from being generated too early in non-0 codebooks
@@ -623,9 +633,21 @@ class Zonos(nn.Module):
 
             # Update `delayed_codes` with these new tokens
             delayed_idx_offset += 1 # Move to next position to fill
-            frame_to_fill = delayed_codes[..., delayed_idx_offset : delayed_idx_offset + 1]
-            mask_for_scatter = (frame_to_fill == unknown_token) | (frame_to_fill == self.config.masked_token_id)
-            frame_to_fill.masked_scatter_(mask_for_scatter, next_tokens_sampled)
+
+            # Refactored update logic:
+            # Get the target frame directly from delayed_codes (shape [B_orig, N_q])
+            current_target_frame_at_offset = delayed_codes[..., delayed_idx_offset]
+
+            # Create mask based on this frame (shape [B_orig, N_q])
+            mask_for_update = (current_target_frame_at_offset == unknown_token) | \
+                              (current_target_frame_at_offset == self.config.masked_token_id)
+
+            # Prepare source tokens (shape [B_orig, N_q])
+            tokens_to_assign = next_tokens_sampled.squeeze(-1)
+
+            # Update the target frame in delayed_codes using the mask.
+            # This updates `delayed_codes` in-place because current_target_frame_at_offset is a view.
+            current_target_frame_at_offset[mask_for_update] = tokens_to_assign[mask_for_update]
 
             pbar.update(1)
 
