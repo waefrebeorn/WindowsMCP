@@ -49,7 +49,6 @@ class DACAutoencoder:
             wav = wav.unsqueeze(0)
         if wav.ndim == 2:
             wav = wav.unsqueeze(1)
-
         if sr != self.dac_model.sample_rate:
             resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=self.dac_model.sample_rate).to(wav.device)
             wav = resampler(wav)
