@@ -233,18 +233,34 @@ class ZonosLocalVoice(BaseTTSEngine):
             #     pass
 
             # Generation parameters (can also be from config/kwargs)
-            # TEMPORARILY REDUCED max_new_tokens FOR OOM DEBUGGING & audio quality diagnosis
-            very_short_max_new_tokens = 86 * 1  # Approx 1 second
-            print(f"DEBUG: Using temporarily reduced max_new_tokens: {very_short_max_new_tokens}")
+            default_max_new_tokens = 86 * 30  # Zonos default
+            max_new_tokens_val = int(self.config.get('max_new_tokens', default_max_new_tokens))
+            print(f"DEBUG: Using max_new_tokens: {max_new_tokens_val}") # Keep debug print for now
+
+            # Prepare sampling_params from config
+            zonos_settings = self.config.get('zonos_settings', {})
+            sampling_params = {
+                'temperature': float(zonos_settings.get('temperature', 1.0)),
+                'top_p': float(zonos_settings.get('top_p', 0.0)),
+                'top_k': int(zonos_settings.get('top_k', 0)),
+                'min_p': float(zonos_settings.get('min_p', 0.1)), # Default from original ZLV
+                'linear': float(zonos_settings.get('linear', 0.0)),
+                'conf': float(zonos_settings.get('confidence', 0.0)), # Key is 'confidence' in UI/config
+                'quad': float(zonos_settings.get('quadratic', 0.0)),
+                'repetition_penalty': float(zonos_settings.get('repetition_penalty', 1.2)),
+                'repetition_penalty_window': int(zonos_settings.get('repetition_penalty_window', 50))
+            }
+            # Filter out any params that Zonos.generate might not expect in sampling_params if they are None or default
+            # For now, pass them all; Zonos's sample_from_logits has defaults for all these.
+
             gen_params = {
-                'max_new_tokens': self.config.get('max_new_tokens_temp_debug', very_short_max_new_tokens), # Use a temp config or the short value
-                'cfg_scale': float(self.config.get('cfg_scale', 2.0)),
-                'sampling_params': self.config.get('sampling_params', dict(min_p=0.1)),
-                # 'batch_size': 1, # Inferred by Zonos model
+                'max_new_tokens': max_new_tokens_val, # Already from self.config.get('max_new_tokens', ...)
+                'cfg_scale': float(zonos_settings.get('cfg_scale', self.config.get('cfg_scale', 2.0))), # Prioritize zonos_settings
+                'sampling_params': sampling_params,
                 'progress_bar': self.config.get('progress_bar', False), # Usually False for backend
             }
 
-            print(f"ZonosLocalVoice: Generating audio for text: \"{text[:50]}...\"")
+            print(f"ZonosLocalVoice: Generating audio for text: \"{text[:50]}...\" with params: {gen_params}")
             codes = self.zonos_model.generate(
                 prefix_conditioning=conditioning,
                 # audio_prefix_codes=audio_prefix_codes, # Add if supporting prefix audio
