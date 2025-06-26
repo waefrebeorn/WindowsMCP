@@ -49,7 +49,10 @@ class DACAutoencoder:
             wav = wav.unsqueeze(0)
         if wav.ndim == 2:
             wav = wav.unsqueeze(1)
+<<<<<<< fix/dtype-mismatch-conditioning
 
+=======
+>>>>>>> master
         if sr != self.dac_model.sample_rate:
             resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=self.dac_model.sample_rate).to(wav.device)
             wav = resampler(wav)
@@ -64,6 +67,7 @@ class DACAutoencoder:
         _, codes, _, _, _ = self.dac_model.encode(wav.to(self.dac_model.device), n_quantizers=self.num_codebooks)
         return codes
 
+<<<<<<< fix/dtype-mismatch-conditioning
     def decode(self, codes: torch.Tensor, chunk_size_codes: int = None) -> torch.Tensor: # codes are [B, N_codebooks, T_codes]
         codes = codes.to(self.dac_model.device)
         _B, _Nq, T_codes = codes.shape # Get Batch, NumQuantizers, TimeCodes
@@ -117,5 +121,15 @@ class DACAutoencoder:
         # is managed correctly during chunked `encode` (which `compress` tries to do).
         # Since Zonos `generate` produces one long stream of codes, we are essentially
         # decoding this stream in chunks.
+=======
+    def decode(self, codes: torch.Tensor) -> torch.Tensor: # codes are [B, N_codebooks, T_codes]
+        codes = codes.to(self.dac_model.device)
+
+        # The vendored DAC.decode takes z_q (quantized latents).
+        # We get z_q from codes using self.dac_model.quantizer.from_codes
+        z_q, _, _ = self.dac_model.quantizer.from_codes(codes)
+
+        reconstructed_audio_padded = self.dac_model.decode(z_q)
+>>>>>>> master
 
         return reconstructed_audio_padded.float() # Ensure float output, shape [B, 1, L]
