@@ -69,7 +69,8 @@ class VectorQuantize(nn.Module):
         return z_q, commitment_loss, codebook_loss, indices, z_e
 
     def embed_code(self, embed_id):
-        return F.embedding(embed_id, self.codebook.weight)
+        # Clone the embed_id tensor to detach it from inference mode graph, if necessary
+        return F.embedding(embed_id.clone(), self.codebook.weight)
 
     def decode_code(self, embed_id):
         return self.embed_code(embed_id).transpose(1, 2)
