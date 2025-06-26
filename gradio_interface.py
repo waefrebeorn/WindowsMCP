@@ -262,7 +262,7 @@ def build_interface():
 
             with gr.Column():
                 gr.Markdown("## Generation Parameters")
-                cfg_scale_slider = gr.Slider(1.0, 5.0, 2.0, 0.1, label="CFG Scale")
+                cfg_scale_slider = gr.Slider(1.01, 5.0, 2.0, 0.01, label="CFG Scale")
                 seed_number = gr.Number(label="Seed", value=420, precision=0)
                 randomize_seed_toggle = gr.Checkbox(label="Randomize Seed (before generation)", value=True)
 

@@ -124,8 +124,8 @@ def sample_from_logits(
     conf: float = 0.0,
     quad: float = 0.0,
     generated_tokens: torch.Tensor | None = None,
-    repetition_penalty: float = 3.0,
-    repetition_penalty_window: int = 2,
+    repetition_penalty: float = 1.2,
+    repetition_penalty_window: int = 50,
 ) -> torch.Tensor:
     """Sample next token from logits using either top_k/p/min_p OR using NovelAI's Unified Sampler.
 
