@@ -233,8 +233,11 @@ class ZonosLocalVoice(BaseTTSEngine):
             #     pass
 
             # Generation parameters (can also be from config/kwargs)
+            # TEMPORARILY REDUCED max_new_tokens FOR OOM DEBUGGING
+            short_max_new_tokens = 86 * 5  # Approx 5 seconds, was 86 * 30
+            print(f"DEBUG: Using temporarily reduced max_new_tokens: {short_max_new_tokens}")
             gen_params = {
-                'max_new_tokens': self.config.get('max_new_tokens', 86 * 30),
+                'max_new_tokens': self.config.get('max_new_tokens_temp_debug', short_max_new_tokens), # Use a temp config or the short value
                 'cfg_scale': float(self.config.get('cfg_scale', 2.0)),
                 'sampling_params': self.config.get('sampling_params', dict(min_p=0.1)),
                 # 'batch_size': 1, # Inferred by Zonos model
