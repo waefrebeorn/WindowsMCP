@@ -376,7 +376,150 @@ class ZonosDashboardWindow(ctk.CTkToplevel):
         self.synthesis_status_label = ctk.CTkLabel(main_frame, text="")
         self.synthesis_status_label.pack(fill=ctk.X)
 
+        # --- Zonos Generation Parameters ---
+        params_outer_frame = ctk.CTkFrame(main_frame)
+        params_outer_frame.pack(fill=ctk.BOTH, expand=True, pady=10)
+
+        params_label = ctk.CTkLabel(params_outer_frame, text="Zonos Generation Parameters", font=("Arial", 14, "bold"))
+        params_label.pack(pady=(0,5))
+
+        params_scroll_frame = ctk.CTkScrollableFrame(params_outer_frame, height=300) # Set a fixed height or make it expand
+        params_scroll_frame.pack(fill=ctk.BOTH, expand=True)
+
+
+        # Helper to create label and slider/entry
+        # Moved definition inside __init__ or make it a staticmethod/global if preferred
+        # For now, defining here for clarity of what's being added.
+        # This helper needs to be defined before it's used.
+
+        self._init_zonos_params_vars()
+        self._create_zonos_params_ui(params_scroll_frame)
+
+
         self.after(100, self.focus) # Bring window to front
+
+    def _init_zonos_params_vars(self):
+        # Initialize CTk variables for Zonos parameters
+        self.max_new_tokens_var = ctk.IntVar()
+        self.cfg_scale_var = ctk.DoubleVar()
+        self.temperature_var = ctk.DoubleVar()
+        self.top_p_var = ctk.DoubleVar()
+        self.top_k_var = ctk.IntVar()
+        self.min_p_var = ctk.DoubleVar()
+        self.linear_var = ctk.DoubleVar()
+        self.confidence_var = ctk.DoubleVar()
+        self.quadratic_var = ctk.DoubleVar()
+        self.repetition_penalty_var = ctk.DoubleVar()
+        self.repetition_penalty_window_var = ctk.IntVar()
+
+    def _create_zonos_params_ui(self, parent_frame):
+        # Helper to create label and slider/entry
+        def add_param_control(parent, text, variable, from_, to, steps=None, default_value=0.0, is_int=False, is_float=False, precision=2):
+            config_key = text.lower().replace(" ", "_").replace(":", "").replace("(", "").replace(")", "")
+
+            current_value = default_value
+            if self.config and 'zonos_settings' in self.config and config_key in self.config['zonos_settings']:
+                current_value = self.config['zonos_settings'][config_key]
+
+            if is_int:
+                variable.set(int(current_value))
+            elif is_float: # For DoubleVar, ensure it's float
+                variable.set(float(current_value))
+            else: # DoubleVar by default
+                 variable.set(float(current_value))
+
+
+            row_frame = ctk.CTkFrame(parent)
+            row_frame.pack(fill=ctk.X, pady=2, padx=5)
+
+            label = ctk.CTkLabel(row_frame, text=text, width=170, anchor="w")
+            label.pack(side=ctk.LEFT, padx=(0,5))
+
+            slider_steps = steps
+            if steps is not None and isinstance(steps, float): # e.g. for float ranges like 0.01 steps
+                # CTkSlider number_of_steps expects int. We calculate based on range and desired float step.
+                # This might not be perfect for all float step scenarios with CTkSlider.
+                # Consider direct entry for very fine float steps if slider is problematic.
+                num_steps_calc = int((to - from_) / steps) if steps > 0 else 0
+                slider_steps = num_steps_calc if num_steps_calc > 0 else None
+
+
+            control_element = ctk.CTkSlider(row_frame, from_=from_, to=to, variable=variable, number_of_steps=slider_steps)
+            control_element.pack(side=ctk.LEFT, expand=True, fill=ctk.X, padx=5)
+
+            entry_width = 70
+            value_entry = ctk.CTkEntry(row_frame, textvariable=variable, width=entry_width)
+            value_entry.pack(side=ctk.LEFT, padx=5)
+
+        # Max New Tokens
+        add_param_control(parent_frame, "Max New Tokens:", self.max_new_tokens_var, 86, 86*30, steps=(86*30-86), default_value=86*30, is_int=True)
+        # CFG Scale
+        add_param_control(parent_frame, "CFG Scale:", self.cfg_scale_var, 1.01, 5.0, steps=0.01, default_value=2.0, is_float=True)
+        # Temperature
+        add_param_control(parent_frame, "Temperature:", self.temperature_var, 0.0, 2.0, steps=0.01, default_value=1.0, is_float=True)
+        # Top P
+        add_param_control(parent_frame, "Top P:", self.top_p_var, 0.0, 1.0, steps=0.01, default_value=0.0, is_float=True)
+        # Top K
+        add_param_control(parent_frame, "Top K:", self.top_k_var, 0, 1024, steps=1024, default_value=0, is_int=True)
+        # Min P
+        add_param_control(parent_frame, "Min P:", self.min_p_var, 0.0, 1.0, steps=0.01, default_value=0.1, is_float=True)
+
+        ctk.CTkLabel(parent_frame, text="Unified Sampler:", font=("Arial", 12, "bold")).pack(pady=(10,0), anchor="w", padx=5)
+        # Linear (Unified)
+        add_param_control(parent_frame, "  Linear:", self.linear_var, -2.0, 2.0, steps=0.01, default_value=0.0, is_float=True)
+        # Confidence (Unified)
+        add_param_control(parent_frame, "  Confidence:", self.confidence_var, -2.0, 2.0, steps=0.01, default_value=0.0, is_float=True)
+        # Quadratic (Unified)
+        add_param_control(parent_frame, "  Quadratic:", self.quadratic_var, -2.0, 2.0, steps=0.01, default_value=0.0, is_float=True)
+
+        ctk.CTkLabel(parent_frame, text="Repetition Penalty:", font=("Arial", 12, "bold")).pack(pady=(10,0), anchor="w", padx=5)
+        # Repetition Penalty
+        add_param_control(parent_frame, "  Penalty:", self.repetition_penalty_var, 1.0, 5.0, steps=0.01, default_value=1.2, is_float=True)
+        # Repetition Penalty Window
+        add_param_control(parent_frame, "  Window:", self.repetition_penalty_window_var, 0, 500, steps=500, default_value=50, is_int=True)
+
+        # Button to save these settings
+        self.save_zonos_settings_button = ctk.CTkButton(parent_frame, text="Save Zonos Settings to Config", command=self.save_zonos_settings)
+        self.save_zonos_settings_button.pack(pady=15, padx=5)
+
+    def save_zonos_settings(self):
+        if not self.config:
+            self.master_app.display_message_popup("Error", "Main config not loaded.", "error")
+            return
+
+        if 'zonos_settings' not in self.config:
+            self.config['zonos_settings'] = {}
+
+        self.config['zonos_settings']['max_new_tokens'] = self.max_new_tokens_var.get()
+        self.config['zonos_settings']['cfg_scale'] = round(self.cfg_scale_var.get(), 2)
+        self.config['zonos_settings']['temperature'] = round(self.temperature_var.get(), 2)
+        self.config['zonos_settings']['top_p'] = round(self.top_p_var.get(), 2)
+        self.config['zonos_settings']['top_k'] = self.top_k_var.get()
+        self.config['zonos_settings']['min_p'] = round(self.min_p_var.get(), 2)
+        self.config['zonos_settings']['linear'] = round(self.linear_var.get(), 2)
+        self.config['zonos_settings']['confidence'] = round(self.confidence_var.get(), 2)
+        self.config['zonos_settings']['quadratic'] = round(self.quadratic_var.get(), 2)
+        self.config['zonos_settings']['repetition_penalty'] = round(self.repetition_penalty_var.get(), 2)
+        self.config['zonos_settings']['repetition_penalty_window'] = self.repetition_penalty_window_var.get()
+
+        try:
+            # Attempt to save the main wubu_config.yaml
+            # This assumes WuBuEngine or a config manager has a save method
+            if hasattr(self.engine, 'save_main_config'): # Check if engine has a save method
+                self.engine.save_main_config() # This method would save self.engine.config
+                self.master_app.display_message_popup("Success", "Zonos settings saved to main config file.", "info")
+            else: # Fallback: try to save directly if we know the path (less ideal)
+                # This requires knowing the config path. For now, just update in-memory.
+                # config_path = "wubu_config.yaml" # This is risky if path is not guaranteed
+                # from ..utils.resource_loader import save_config
+                # save_config(self.config, config_path)
+                print("ZonosDashboard: Settings updated in memory. Main config save method not found on engine.")
+                self.master_app.display_message_popup("Info", "Zonos settings updated in memory.\n(Full save to file requires engine support or restart)", "info")
+
+        except Exception as e:
+            print(f"Error saving Zonos settings to config: {e}")
+            self.master_app.display_message_popup("Error", f"Failed to save Zonos settings to config file: {e}", "error")
+
 
     def browse_reference_audio(self):
         from tkinter import filedialog
